@@ -27,7 +27,7 @@
 ### 1. Clone the Project
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/MatinDehghanian/accounting_bot.git
 cd accounting_bot
 ```
 
