@@ -42,10 +42,12 @@ async def receive_webhook(
     # Log incoming request
     logger.info(f"📥 Webhook received from {request.client.host if request.client else 'unknown'}")
     
-    # Optional: Verify webhook secret
-    # expected_secret = "your-webhook-secret"
-    # if expected_secret and x_webhook_secret != expected_secret:
-    #     raise HTTPException(status_code=403, detail="Invalid webhook secret")
+    # Verify webhook secret if configured
+    import os
+    expected_secret = os.getenv("WEBHOOK_SECRET")
+    if expected_secret and x_webhook_secret != expected_secret:
+        logger.warning(f"❌ Invalid webhook secret received")
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
     
     try:
         # Parse webhook data (should be a list of events)
