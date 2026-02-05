@@ -72,7 +72,10 @@ class TelegramBot:
                 InlineKeyboardButton(text="⚡ Toggle Sync", callback_data=f"{MENU_PREFIX}sync")
             ],
             [
-                InlineKeyboardButton(text="📖 Help", callback_data=f"{MENU_PREFIX}help"),
+                InlineKeyboardButton(text="⚙️ Settings", callback_data=f"{MENU_PREFIX}settings"),
+                InlineKeyboardButton(text="📖 Help", callback_data=f"{MENU_PREFIX}help")
+            ],
+            [
                 InlineKeyboardButton(text="ℹ️ About", callback_data=f"{MENU_PREFIX}about")
             ]
         ])
@@ -130,6 +133,10 @@ Select an option below:"""
                 await self.disable_sync(callback)
             elif action == "sync_admins":
                 await self.sync_admins_from_api(callback)
+            elif action == "settings":
+                await self.show_settings(callback)
+            elif action.startswith("set_"):
+                await self.handle_settings_action(callback, action)
             elif action == "help":
                 await self.show_help(callback)
             elif action == "about":
@@ -385,16 +392,26 @@ Then restart the bot."""
                     if chat_id:
                         try:
                             # Try to create a forum topic for this admin
+                            logger.info(f"Creating topic for admin {admin_username} in chat {chat_id}")
                             topic = await self.bot.create_forum_topic(
                                 chat_id=int(chat_id),
                                 name=f"👤 {admin_username}"[:128]
                             )
                             topic_id = str(topic.message_thread_id)
                             created_topics += 1
-                            logger.info(f"Created topic for admin: {admin_username}")
+                            logger.info(f"Created topic {topic_id} for admin: {admin_username}")
                         except Exception as e:
-                            logger.warning(f"Could not create topic for {admin_username}: {e}")
+                            error_msg = str(e)
+                            logger.error(f"Could not create topic for {admin_username}: {error_msg}")
+                            if "not enough rights" in error_msg.lower() or "can't manage" in error_msg.lower():
+                                logger.error("Bot needs 'Manage Topics' permission in the forum group!")
+                            elif "chat not found" in error_msg.lower():
+                                logger.error(f"Chat {chat_id} not found. Ensure FALLBACK_CHAT_ID is correct.")
+                            elif "not a forum" in error_msg.lower() or "supergroup" in error_msg.lower():
+                                logger.error("The group must have Topics enabled (Forum supergroup).")
                             errors += 1
+                    else:
+                        logger.warning(f"No FALLBACK_CHAT_ID set - cannot create topic for {admin_username}")
                     
                     # Save admin mapping
                     await self.db.set_admin_topic(
@@ -506,6 +523,141 @@ Each notification includes buttons:
             reply_markup=self.get_back_keyboard()
         )
         await callback.answer()
+
+    async def show_settings(self, callback: CallbackQuery):
+        """Show settings menu"""
+        # Get current settings
+        sync_status = await self.db.get_sync_status("initial_sync_complete")
+        sync_emoji = "✅" if sync_status == "true" else "❌"
+        
+        api_status = "✅ Connected" if self.api_client else "❌ Not configured"
+        chat_status = f"✅ {self.fallback_chat_id}" if self.fallback_chat_id else "❌ Not set"
+        
+        text = f"""⚙️ <b>Settings</b>
+
+<b>Current Configuration:</b>
+
+<b>🔄 Sync Status:</b> {sync_emoji} {"Enabled" if sync_status == "true" else "Disabled"}
+<b>📡 Panel API:</b> {api_status}
+<b>💬 Forum Chat:</b> {chat_status}
+
+<b>Actions:</b>"""
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔴 Disable Sync" if sync_status == "true" else "🟢 Enable Sync",
+                    callback_data=f"{MENU_PREFIX}set_toggle_sync"
+                )
+            ],
+            [
+                InlineKeyboardButton(text="🗑 Clear All Admins", callback_data=f"{MENU_PREFIX}set_clear_admins")
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Reset Topics", callback_data=f"{MENU_PREFIX}set_reset_topics")
+            ],
+            [
+                InlineKeyboardButton(text="📊 View Config", callback_data=f"{MENU_PREFIX}set_view_config")
+            ],
+            [
+                InlineKeyboardButton(text="🔙 Back to Menu", callback_data=f"{MENU_PREFIX}main")
+            ]
+        ])
+        
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        await callback.answer()
+
+    async def handle_settings_action(self, callback: CallbackQuery, action: str):
+        """Handle settings sub-actions"""
+        try:
+            if action == "set_toggle_sync":
+                current = await self.db.get_sync_status("initial_sync_complete")
+                new_status = "false" if current == "true" else "true"
+                await self.db.set_sync_status("initial_sync_complete", new_status)
+                await callback.answer(f"Sync {'enabled' if new_status == 'true' else 'disabled'} ✅")
+                await self.show_settings(callback)
+                
+            elif action == "set_clear_admins":
+                # Show confirmation
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="⚠️ Yes, Clear All", callback_data=f"{MENU_PREFIX}set_confirm_clear"),
+                        InlineKeyboardButton(text="❌ Cancel", callback_data=f"{MENU_PREFIX}settings")
+                    ]
+                ])
+                await callback.message.edit_text(
+                    "⚠️ <b>Confirm Clear Admins</b>\n\nThis will remove all registered admins from the database.\nTopics in Telegram will NOT be deleted.\n\nAre you sure?",
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+                await callback.answer()
+                
+            elif action == "set_confirm_clear":
+                # Execute clear
+                admin_topics = await self.db.get_all_admin_topics()
+                for admin in admin_topics:
+                    await self.db.delete_admin_topic(admin['admin_telegram_id'])
+                await callback.answer(f"Cleared {len(admin_topics)} admins ✅", show_alert=True)
+                await self.show_settings(callback)
+                
+            elif action == "set_reset_topics":
+                # Reset topic IDs (keep admins, clear topic references)
+                admin_topics = await self.db.get_all_admin_topics()
+                reset_count = 0
+                for admin in admin_topics:
+                    if admin['topic_id']:
+                        await self.db.set_admin_topic(
+                            admin_telegram_id=admin['admin_telegram_id'],
+                            admin_username=admin['admin_username'],
+                            chat_id=admin['chat_id'],
+                            topic_id=None
+                        )
+                        reset_count += 1
+                await callback.answer(f"Reset {reset_count} topic references ✅", show_alert=True)
+                await self.show_settings(callback)
+                
+            elif action == "set_view_config":
+                # Show current environment config
+                config_text = f"""📊 <b>Current Configuration</b>
+
+<b>Bot Token:</b> <code>{'✅ Set' if os.getenv('BOT_TOKEN') else '❌ Missing'}</code>
+<b>Webhook Secret:</b> <code>{'✅ Set' if os.getenv('WEBHOOK_SECRET') else '⚠️ Not set'}</code>
+
+<b>Panel API:</b>
+• URL: <code>{os.getenv('PANEL_API_URL', 'Not set')}</code>
+• Username: <code>{os.getenv('PANEL_USERNAME', 'Not set')}</code>
+• Password: <code>{'✅ Set' if os.getenv('PANEL_PASSWORD') else '❌ Missing'}</code>
+
+<b>Chat Settings:</b>
+• Chat ID: <code>{self.fallback_chat_id or 'Not set'}</code>
+• Topic ID: <code>{self.fallback_topic_id or 'Not set'}</code>
+
+<b>Server:</b>
+• Host: <code>{os.getenv('HOST', '0.0.0.0')}</code>
+• Port: <code>{os.getenv('PORT', '8080')}</code>
+• Debug: <code>{os.getenv('DEBUG', 'False')}</code>
+
+<i>Edit .env file and restart to change settings.</i>"""
+                
+                await callback.message.edit_text(
+                    config_text,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🔙 Back to Settings", callback_data=f"{MENU_PREFIX}settings")]
+                    ])
+                )
+                await callback.answer()
+                
+            else:
+                await callback.answer("Unknown setting action", show_alert=True)
+                
+        except Exception as e:
+            logger.error(f"Settings action error: {str(e)}")
+            await callback.answer(f"❌ Error: {str(e)}", show_alert=True)
 
     async def handle_accounting_callback(self, callback: CallbackQuery):
         """Handle accounting action callbacks (paid, unpaid, settlement)"""

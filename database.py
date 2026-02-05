@@ -193,3 +193,12 @@ class Database:
             cursor = await db.execute("SELECT * FROM admin_topics")
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    async def delete_admin_topic(self, admin_telegram_id: str):
+        """Delete admin topic mapping"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM admin_topics WHERE admin_telegram_id = ?",
+                (admin_telegram_id,)
+            )
+            await db.commit()

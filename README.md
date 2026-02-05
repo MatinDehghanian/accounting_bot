@@ -53,13 +53,33 @@ WEBHOOK_SECRET=your_webhook_secret_here
 FALLBACK_CHAT_ID=-1001234567890
 FALLBACK_TOPIC_ID=
 
+# Panel API Settings (for syncing admins)
+PANEL_API_URL=https://your-panel.com
+PANEL_USERNAME=admin
+PANEL_PASSWORD=your_password
+
 # Server Settings
 HOST=0.0.0.0
 PORT=8080
 DEBUG=False
 ```
 
-### 4. Run
+### 4. Run with Docker (Recommended)
+
+```bash
+# Create .env file first
+cp .env.example .env
+# Edit .env with your settings
+nano .env
+
+# Build and run with Docker
+docker-compose up -d
+
+# View logs
+docker-compose logs -f accounting-bot
+```
+
+### 5. Run without Docker (Alternative)
 
 ```bash
 # Activate virtual environment
@@ -78,7 +98,9 @@ The bot uses **inline buttons** instead of commands. Just send any message to th
 **Main Menu Options:**
 - 📊 **Statistics** - View system stats and admin count
 - 👥 **Admin List** - See all registered admins and their topics
-- 🔄 **Enable Sync** - Enable/disable processing of user_updated events
+- 🔄 **Sync Admins** - Fetch admins from Panel API and create topics
+- ⚡ **Toggle Sync** - Enable/disable processing of user_updated events
+- ⚙️ **Settings** - Configure and manage bot settings
 - 📖 **Help** - How the bot works
 - ℹ️ **About** - Bot information
 
@@ -174,15 +196,45 @@ Clicking any button updates the message and records the result.
 ### Topics not being created
 - Make sure the group has forum topics enabled
 - Bot needs admin permissions with "Manage Topics" privilege
+- Check FALLBACK_CHAT_ID is correctly set to the forum group ID
+- Verify the group ID starts with -100
+- Run "Sync Admins" to create topics for existing admins
 
 ## Docker Deployment
 
+Docker is the **recommended** way to run the bot:
+
 ```bash
-# Build and run
+# 1. Configure environment
+cp .env.example .env
+nano .env  # Edit with your settings
+
+# 2. Build and run
 docker-compose up -d
 
-# View logs
-docker-compose logs -f
+# 3. View logs
+docker-compose logs -f accounting-bot
+
+# 4. Stop
+docker-compose down
+
+# 5. Rebuild after changes
+docker-compose up -d --build
+```
+
+### Docker without Compose
+
+```bash
+# Build image
+docker build -t accounting-bot .
+
+# Run container
+docker run -d \
+  --name accounting-bot \
+  -p 8080:8080 \
+  -v $(pwd)/data:/app/data \
+  --env-file .env \
+  accounting-bot
 ```
 
 ## Support

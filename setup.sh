@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Exit on error
+set -e
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -10,8 +13,16 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}🤖 PasarGuard Accounting Bot Setup${NC}"
 echo "=================================="
 
+# Detect OS
+if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    OS=$ID
+else
+    OS=$(uname -s)
+fi
+
 # Check if Python 3.8+ is installed
-python_version=$(python3 -V 2>&1 | grep -Po '(?<=Python )(.+)')
+python_version=$(python3 -V 2>&1 | sed 's/Python //')
 if [[ -z "$python_version" ]]; then
     echo -e "${RED}❌ Python 3 not found. Please install Python 3.8+${NC}"
     exit 1
@@ -19,9 +30,33 @@ fi
 
 echo -e "${GREEN}✅ Python version: $python_version${NC}"
 
+# Extract major.minor version for package name
+python_major_minor=$(echo "$python_version" | cut -d. -f1,2)
+
+# Check if python3-venv is available (for Debian/Ubuntu)
+echo -e "${YELLOW}🔍 Checking for venv module...${NC}"
+if ! python3 -c "import ensurepip" 2>/dev/null; then
+    echo -e "${RED}❌ Python venv module not available.${NC}"
+    
+    if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
+        echo -e "${YELLOW}📦 Installing python${python_major_minor}-venv...${NC}"
+        sudo apt update
+        sudo apt install -y python${python_major_minor}-venv
+    else
+        echo -e "${RED}Please install python3-venv package for your system.${NC}"
+        exit 1
+    fi
+fi
+
+echo -e "${GREEN}✅ Python venv module available${NC}"
+
 # Create virtual environment
 echo -e "${YELLOW}📦 Creating virtual environment...${NC}"
-python3 -m venv venv
+if ! python3 -m venv venv; then
+    echo -e "${RED}❌ Failed to create virtual environment${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✅ Virtual environment created${NC}"
 
 # Activate virtual environment
 echo -e "${YELLOW}🔄 Activating virtual environment...${NC}"
@@ -29,7 +64,7 @@ source venv/bin/activate
 
 # Upgrade pip
 echo -e "${YELLOW}⬆️ Upgrading pip...${NC}"
-pip install --upgrade pip
+pip install --upgrade pip --quiet
 
 # Install requirements
 echo -e "${YELLOW}📥 Installing requirements...${NC}"
