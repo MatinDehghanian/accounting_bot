@@ -58,22 +58,22 @@ if [ $? -ne 0 ]; then
 fi
 
 # Detect deployment method and restart
-if [ -f "docker-compose.yml" ] && command -v docker-compose &> /dev/null; then
+if [ -f "docker-compose.yml" ] && (command -v docker &> /dev/null); then
     echo -e "${YELLOW}🐳 Docker detected. Rebuilding container...${NC}"
-    docker-compose down
-    docker-compose up -d --build
+    docker compose down
+    docker compose up -d --build
     
     echo -e "${YELLOW}⏳ Waiting for container to start...${NC}"
     sleep 5
     
     # Check if container is running
-    if docker-compose ps | grep -q "Up"; then
+    if docker compose ps | grep -q "Up\|running"; then
         echo -e "${GREEN}✅ Container is running${NC}"
         echo -e "${BLUE}📋 Recent logs:${NC}"
-        docker-compose logs --tail=20 accounting-bot
+        docker compose logs --tail=20 accounting-bot
     else
         echo -e "${RED}❌ Container failed to start. Check logs:${NC}"
-        docker-compose logs --tail=50 accounting-bot
+        docker compose logs --tail=50 accounting-bot
         exit 1
     fi
 
@@ -106,7 +106,7 @@ elif [ -f "venv/bin/activate" ]; then
 else
     echo -e "${YELLOW}ℹ️ No deployment method detected.${NC}"
     echo -e "${BLUE}Please restart the bot manually:${NC}"
-    echo "  Docker:  docker-compose up -d --build"
+    echo "  Docker:  docker compose up -d --build"
     echo "  Venv:    source venv/bin/activate && python main.py"
 fi
 

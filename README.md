@@ -73,10 +73,10 @@ cp .env.example .env
 nano .env
 
 # Build and run with Docker
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f accounting-bot
+docker compose logs -f accounting-bot
 ```
 
 ### 5. Run without Docker (Alternative)
@@ -210,16 +210,16 @@ cp .env.example .env
 nano .env  # Edit with your settings
 
 # 2. Build and run
-docker-compose up -d
+docker compose up -d
 
 # 3. View logs
-docker-compose logs -f accounting-bot
+docker compose logs -f accounting-bot
 
 # 4. Stop
-docker-compose down
+docker compose down
 
 # 5. Rebuild after changes
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 ### Docker without Compose
@@ -257,7 +257,9 @@ The update script will:
 **Docker:**
 ```bash
 git pull origin main
-docker-compose down
+docker compose down
+docker compose up -d --build
+```
 docker-compose up -d --build
 ```
 
