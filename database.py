@@ -4,6 +4,7 @@ from typing import Optional, List, Dict
 import json
 import logging
 import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,12 @@ class Database:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or DEFAULT_DB_PATH
         logger.info(f"Database path: {self.db_path}")
+        
+        # Ensure parent directory exists
+        db_dir = Path(self.db_path).parent
+        if not db_dir.exists():
+            logger.info(f"Creating database directory: {db_dir}")
+            db_dir.mkdir(parents=True, exist_ok=True)
 
     async def init_db(self):
         """Initialize database tables"""
