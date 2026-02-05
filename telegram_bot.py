@@ -66,45 +66,45 @@ class TelegramBot:
 
     async def cmd_start(self, message: Message):
         """Handle /start command"""
-        welcome_text = """🤖 <b>ربات حساب‌وکتاب فعال شد</b>
+        welcome_text = """🤖 <b>Accounting Bot Activated</b>
 
-این ربات برای مدیریت اطلاعات حساب‌وکتاب کاربران از طریق webhook طراحی شده.
+This bot is designed for managing user accounting information via webhooks.
 
-<b>دستورات موجود:</b>
-/help - راهنما
-/sync - همگام‌سازی اولیه کاربران  
-/set_admin_topic - تنظیم تاپیک برای ادمین
-/list_admins - لیست ادمین‌ها و تاپیک‌ها
-/stats - آمار سیستم"""
+<b>Available Commands:</b>
+/help - Help guide
+/sync - Initial user sync  
+/set_admin_topic - Set topic for admin
+/list_admins - List admins and topics
+/stats - System statistics"""
         
         await message.reply(welcome_text, parse_mode="HTML")
 
     async def cmd_help(self, message: Message):
         """Handle /help command"""
-        help_text = """📖 <b>راهنمای استفاده</b>
+        help_text = """📖 <b>Usage Guide</b>
 
-<b>🔧 تنظیمات:</b>
-/set_admin_topic - تنظیم تاپیک اختصاصی برای هر ادمین
-/list_admins - مشاهده ادمین‌ها و تاپیک‌های تنظیم شده
+<b>🔧 Settings:</b>
+/set_admin_topic - Set dedicated topic for each admin
+/list_admins - View configured admins and their topics
 
-<b>📊 عملیات:</b>
-/sync - همگام‌سازی اولیه اطلاعات کاربران از API
-/stats - مشاهده آمار و وضعیت سیستم
+<b>📊 Operations:</b>
+/sync - Initial sync of user information from API
+/stats - View system status and statistics
 
-<b>🎯 نحوه کار:</b>
-1. ابتدا با /sync اطلاعات کاربران را همگام‌سازی کنید
-2. با /set_admin_topic تاپیک‌های اختصاصی تنظیم کنید
-3. ربات به طور خودکار پیام‌های webhook را پردازش می‌کند
+<b>🎯 How it works:</b>
+1. First sync user information with /sync
+2. Configure dedicated topics with /set_admin_topic
+3. Bot automatically processes webhook messages
 
-<b>🔔 شرایط ارسال پیام:</b>
-• user_created: همیشه
-• user_updated: فقط در صورت افزایش انقضا ≥7 روز یا تغییر به on_hold"""
+<b>🔔 Message Sending Conditions:</b>
+• user_created: Always
+• user_updated: Only when expire increases ≥7 days or status changes to on_hold"""
         
         await message.reply(help_text, parse_mode="HTML")
 
     async def cmd_sync(self, message: Message):
         """Handle /sync command - sync users from API"""
-        await message.reply("🔄 شروع همگام‌سازی اطلاعات کاربران...")
+        await message.reply("🔄 Starting user sync...")
         
         try:
             # This is where you would call your PasarGuard API
@@ -113,26 +113,26 @@ class TelegramBot:
             await self.db.set_sync_status("last_sync", datetime.now().isoformat())
             
             await message.reply(
-                "✅ همگام‌سازی با موفقیت انجام شد\n"
-                "اکنون ربات آماده پردازش رویدادهای user_updated است",
+                "✅ Sync completed successfully\n"
+                "Bot is now ready to process user_updated events",
                 parse_mode="HTML"
             )
             
             logger.info("Manual sync completed")
             
         except Exception as e:
-            await message.reply(f"❌ خطا در همگام‌سازی: {str(e)}")
+            await message.reply(f"❌ Sync error: {str(e)}")
             logger.error(f"Sync error: {str(e)}")
 
     async def cmd_set_admin_topic(self, message: Message, state: FSMContext):
         """Handle /set_admin_topic command"""
-        text = """⚙️ <b>تنظیم تاپیک ادمین</b>
+        text = """⚙️ <b>Admin Topic Setup</b>
 
-لطفاً Telegram ID ادمین را وارد کنید:
+Please enter the Admin's Telegram ID:
 
-<b>نکات:</b>
-• از @userinfobot برای دریافت Telegram ID استفاده کنید
-• ID عددی است (مثل: 123456789)"""
+<b>Notes:</b>
+• Use @userinfobot to get Telegram ID
+• ID is numeric (e.g.: 123456789)"""
         
         await message.reply(text, parse_mode="HTML")
         await state.set_state(AdminConfigStates.waiting_for_chat_id)
@@ -144,25 +144,24 @@ class TelegramBot:
             
             # Validate it's a number
             if not admin_telegram_id.isdigit():
-                await message.reply("❌ لطفاً یک عدد معتبر وارد کنید")
+                await message.reply("❌ Please enter a valid number")
                 return
             
             await state.update_data(admin_telegram_id=admin_telegram_id)
             
-            text = f"""✅ Telegram ID ادمین: <code>{admin_telegram_id}</code>
+            text = f"""✅ Admin Telegram ID: <code>{admin_telegram_id}</code>
 
-اکنون Chat ID گروه/چت مقصد را وارد کنید:
+Now enter the destination group/chat Chat ID:
 
-<b>نحوه دریافت Chat ID:</b>
-• ربات را به گروه اضافه کنید
-• دستور /id@ بزنید تا Chat ID را دریافت کنید
-• یا از @getidsbot استفاده کنید"""
+<b>How to get Chat ID:</b>
+• Add the bot to the group
+• Use @getidsbot to get the Chat ID"""
             
             await message.reply(text, parse_mode="HTML")
             await state.set_state(AdminConfigStates.waiting_for_topic_id)
             
         except Exception as e:
-            await message.reply(f"❌ خطا: {str(e)}")
+            await message.reply(f"❌ Error: {str(e)}")
             await state.clear()
 
     async def process_topic_id(self, message: Message, state: FSMContext):
@@ -181,12 +180,12 @@ class TelegramBot:
             try:
                 int(chat_id)
             except ValueError:
-                await message.reply("❌ Chat ID باید عدد باشد")
+                await message.reply("❌ Chat ID must be a number")
                 return
             
             # Validate topic_id if provided
             if topic_id and not topic_id.isdigit():
-                await message.reply("❌ Topic ID باید عدد باشد")
+                await message.reply("❌ Topic ID must be a number")
                 return
             
             # Save to database
@@ -197,7 +196,7 @@ class TelegramBot:
                 topic_id=topic_id
             )
             
-            success_text = f"""✅ <b>تنظیمات ذخیره شد</b>
+            success_text = f"""✅ <b>Settings Saved</b>
 
 👤 Admin Telegram ID: <code>{admin_telegram_id}</code>
 💬 Chat ID: <code>{chat_id}</code>"""
@@ -205,9 +204,9 @@ class TelegramBot:
             if topic_id:
                 success_text += f"\n🗂 Topic ID: <code>{topic_id}</code>"
             else:
-                success_text += "\n🗂 Topic: عمومی (بدون topic)"
+                success_text += "\n🗂 Topic: General (no topic)"
             
-            success_text += "\n\n🎯 از این پس پیام‌های این ادمین به این مکان ارسال می‌شود"
+            success_text += "\n\n🎯 From now on, messages for this admin will be sent to this location"
             
             await message.reply(success_text, parse_mode="HTML")
             await state.clear()
@@ -215,7 +214,7 @@ class TelegramBot:
             logger.info(f"Admin topic configured: {admin_telegram_id} -> {chat_id}:{topic_id}")
             
         except Exception as e:
-            await message.reply(f"❌ خطا: {str(e)}")
+            await message.reply(f"❌ Error: {str(e)}")
             await state.clear()
 
     async def cmd_list_admins(self, message: Message):
@@ -224,10 +223,10 @@ class TelegramBot:
             admin_topics = await self.db.get_all_admin_topics()
             
             if not admin_topics:
-                await message.reply("📝 هیچ ادمینی تنظیم نشده است")
+                await message.reply("📝 No admins have been configured")
                 return
             
-            text = "👥 <b>لیست ادمین‌ها و تاپیک‌ها:</b>\n\n"
+            text = "👥 <b>Admin and Topic List:</b>\n\n"
             
             for admin in admin_topics:
                 text += f"👤 <b>{admin['admin_username']}</b>\n"
@@ -237,14 +236,14 @@ class TelegramBot:
                 if admin['topic_id']:
                     text += f"🗂 Topic: <code>{admin['topic_id']}</code>\n"
                 else:
-                    text += "🗂 Topic: عمومی\n"
+                    text += "🗂 Topic: General\n"
                     
                 text += "─────────────\n"
             
             await message.reply(text, parse_mode="HTML")
             
         except Exception as e:
-            await message.reply(f"❌ خطا: {str(e)}")
+            await message.reply(f"❌ Error: {str(e)}")
 
     async def cmd_stats(self, message: Message):
         """Handle /stats command"""
@@ -253,26 +252,26 @@ class TelegramBot:
             last_sync = await self.db.get_sync_status("last_sync")
             
             sync_emoji = "✅" if sync_status == "true" else "❌"
-            sync_text = "کامل" if sync_status == "true" else "ناتمام"
+            sync_text = "Complete" if sync_status == "true" else "Incomplete"
             
-            last_sync_text = format_persian_datetime(last_sync) if last_sync else "هرگز"
+            last_sync_text = format_persian_datetime(last_sync) if last_sync else "Never"
             
             admin_topics = await self.db.get_all_admin_topics()
             admin_count = len(admin_topics)
             
-            text = f"""📊 <b>آمار سیستم</b>
+            text = f"""📊 <b>System Statistics</b>
 
-🔄 <b>همگام‌سازی:</b> {sync_emoji} {sync_text}
-🕐 <b>آخرین sync:</b> {last_sync_text}
-👥 <b>ادمین‌های تنظیم شده:</b> {admin_count}
+🔄 <b>Sync Status:</b> {sync_emoji} {sync_text}
+🕐 <b>Last Sync:</b> {last_sync_text}
+👥 <b>Configured Admins:</b> {admin_count}
 
-🤖 <b>وضعیت ربات:</b> ✅ فعال
-💾 <b>دیتابیس:</b> ✅ متصل"""
+🤖 <b>Bot Status:</b> ✅ Active
+💾 <b>Database:</b> ✅ Connected"""
             
             await message.reply(text, parse_mode="HTML")
             
         except Exception as e:
-            await message.reply(f"❌ خطا: {str(e)}")
+            await message.reply(f"❌ Error: {str(e)}")
 
     async def handle_callback(self, callback: CallbackQuery):
         """Handle inline keyboard callbacks"""
@@ -310,7 +309,7 @@ class TelegramBot:
             
         except Exception as e:
             logger.error(f"Callback handling error: {str(e)}")
-            await callback.answer("❌ خطا در پردازش", show_alert=True)
+            await callback.answer("❌ Processing error", show_alert=True)
 
     async def handle_payment_status(self, callback: CallbackQuery, username: str, 
                                   status: str, clicker_id: str, clicker_name: str, current_time: str):
@@ -320,7 +319,7 @@ class TelegramBot:
         current_payment = await self.db.get_payment_status(username)
         
         if current_payment and current_payment['payment_status'] == status:
-            await callback.answer(f"قبلاً به عنوان {status} ثبت شده", show_alert=False)
+            await callback.answer(f"Already marked as {status}", show_alert=False)
             return
         
         # Update payment status
@@ -335,17 +334,17 @@ class TelegramBot:
         
         # Add new status
         emoji = "✅" if status == "Paid" else "❌"
-        status_line = f"\n{emoji} {status} ثبت شد توسط {clicker_name} در {current_time}"
+        status_line = f"\n{emoji} {status} marked by {clicker_name} at {current_time}"
         
         new_text = '\n'.join(filtered_lines) + status_line
         new_text = truncate_text(new_text)
         
         try:
             await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=callback.message.reply_markup)
-            await callback.answer(f"{status} ثبت شد ✅")
+            await callback.answer(f"{status} marked ✅")
         except Exception as e:
             logger.error(f"Error editing message: {str(e)}")
-            await callback.answer("ثبت شد ولی خطا در بروزرسانی پیام")
+            await callback.answer("Marked but error updating message")
 
     async def handle_add_settlement(self, callback: CallbackQuery, username: str, 
                                    clicker_id: str, clicker_name: str, current_time: str):
@@ -358,21 +357,21 @@ class TelegramBot:
         original_text = callback.message.text or callback.message.caption
         
         # Check if already added
-        if "➕ به لیست تسویه اضافه شد" in original_text:
-            await callback.answer("قبلاً به لیست تسویه اضافه شده", show_alert=False)
+        if "➕ Added to settlement list" in original_text:
+            await callback.answer("Already added to settlement list", show_alert=False)
             return
         
         # Add settlement line
-        settlement_line = f"\n➕ به لیست تسویه اضافه شد توسط {clicker_name} در {current_time}"
+        settlement_line = f"\n➕ Added to settlement list by {clicker_name} at {current_time}"
         new_text = original_text + settlement_line
         new_text = truncate_text(new_text)
         
         try:
             await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=callback.message.reply_markup)
-            await callback.answer("به لیست تسویه اضافه شد ✅")
+            await callback.answer("Added to settlement list ✅")
         except Exception as e:
             logger.error(f"Error editing message: {str(e)}")
-            await callback.answer("اضافه شد ولی خطا در بروزرسانی پیام")
+            await callback.answer("Added but error updating message")
 
 
 def create_accounting_keyboard(username: str, admin_telegram_id: str, event_key: str) -> InlineKeyboardMarkup:
@@ -381,17 +380,17 @@ def create_accounting_keyboard(username: str, admin_telegram_id: str, event_key:
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="پرداخت کرد ✅",
+                text="Paid ✅",
                 callback_data=create_callback_data("paid", username, admin_telegram_id, event_key)
             ),
             InlineKeyboardButton(
-                text="پرداخت نکرد ❌", 
+                text="Unpaid ❌", 
                 callback_data=create_callback_data("unpaid", username, admin_telegram_id, event_key)
             )
         ],
         [
             InlineKeyboardButton(
-                text="➕ افزودن به لیست تسویه",
+                text="➕ Add to Settlement List",
                 callback_data=create_callback_data("add_settlement", username, admin_telegram_id, event_key)
             )
         ]
@@ -426,7 +425,7 @@ async def send_to_admin_topic(admin_telegram_id: str, admin_username: str, messa
             chat_id = fallback_chat_id
             topic_id = fallback_topic_id
             
-            warning_msg = f"\n\n⚠️ <b>توجه:</b> mapping برای ادمین {admin_telegram_id} ثبت نشده"
+            warning_msg = f"\n\n⚠️ <b>Note:</b> No mapping found for admin {admin_telegram_id}"
             message += warning_msg
             
             logger.warning(f"No topic mapping found for admin {admin_telegram_id}")

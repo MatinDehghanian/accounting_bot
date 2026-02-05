@@ -179,3 +179,5 @@ Thumbs.db
 # Backup files
 *.bak
 *.backup
+
+openapi.json

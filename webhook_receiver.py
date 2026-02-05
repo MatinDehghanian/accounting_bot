@@ -222,26 +222,26 @@ def create_user_created_message(event: Dict) -> str:
     by_data = event.get('by', {})
     send_at = event.get('send_at', 0)
     
-    user_id = user_data.get('id', 'نامشخص')
+    user_id = user_data.get('id', 'Unknown')
     status = user_data.get('status', 'unknown')
     expire = user_data.get('expire')
     data_limit = user_data.get('data_limit', 0)
     
-    admin_username = by_data.get('username', 'نامشخص')
-    admin_tg_id = by_data.get('telegram_id', 'نامشخص')
+    admin_username = by_data.get('username', 'Unknown')
+    admin_tg_id = by_data.get('telegram_id', 'Unknown')
     
-    expire_str = format_persian_datetime(expire) if expire else 'نامحدود'
-    data_limit_str = f"{data_limit // (1024**3):.1f} GB" if data_limit > 0 else 'نامحدود'
+    expire_str = format_persian_datetime(expire) if expire else 'Unlimited'
+    data_limit_str = f"{data_limit // (1024**3):.1f} GB" if data_limit > 0 else 'Unlimited'
     
     send_time = datetime.fromtimestamp(send_at, tz=timezone.utc)
     send_time_str = format_persian_datetime(send_time.isoformat())
     
-    message = f"""🧾 <b>حساب‌وکتاب | user_created</b>
+    message = f"""🧾 <b>Accounting | user_created</b>
 
 👤 <b>User:</b> <code>{username}</code> (id: {user_id})
 👮 <b>Admin:</b> {admin_username} (tg_id: {admin_tg_id})
 
-<b>جزئیات:</b>
+<b>Details:</b>
 ⚡ Status: {status}
 📊 Data Limit: {data_limit_str}
 📅 Expire: {expire_str}
@@ -258,47 +258,47 @@ def create_user_updated_message(event: Dict, old_snapshot: Dict, trigger_reason:
     by_data = event.get('by', {})
     send_at = event.get('send_at', 0)
     
-    user_id = user_data.get('id', 'نامشخص')
+    user_id = user_data.get('id', 'Unknown')
     new_status = user_data.get('status', 'unknown')
     new_expire = user_data.get('expire')
     
     old_status = old_snapshot.get('status', 'unknown')
     old_expire = old_snapshot.get('expire')
     
-    admin_username = by_data.get('username', 'نامشخص')
-    admin_tg_id = by_data.get('telegram_id', 'نامشخص')
+    admin_username = by_data.get('username', 'Unknown')
+    admin_tg_id = by_data.get('telegram_id', 'Unknown')
     
     send_time = datetime.fromtimestamp(send_at, tz=timezone.utc)
     send_time_str = format_persian_datetime(send_time.isoformat())
     
-    message = f"""🧾 <b>حساب‌وکتاب | user_updated</b>
+    message = f"""🧾 <b>Accounting | user_updated</b>
 
 👤 <b>User:</b> <code>{username}</code> (id: {user_id})
 👮 <b>Admin:</b> {admin_username} (tg_id: {admin_tg_id})
 
-<b>جزئیات:</b>
+<b>Details:</b>
 ⚡ Status: {new_status}
-📅 Expire: {format_persian_datetime(new_expire) if new_expire else 'نامحدود'}
+📅 Expire: {format_persian_datetime(new_expire) if new_expire else 'Unlimited'}
 🕐 Updated: {send_time_str}"""
 
     # Add trigger-specific information
     if "expire_extended" in trigger_reason:
         days_diff = trigger_reason.split('_')[2]
-        old_expire_str = format_persian_datetime(old_expire) if old_expire else 'نامحدود'
-        new_expire_str = format_persian_datetime(new_expire) if new_expire else 'نامحدود'
+        old_expire_str = format_persian_datetime(old_expire) if old_expire else 'Unlimited'
+        new_expire_str = format_persian_datetime(new_expire) if new_expire else 'Unlimited'
         message += f"""
 
-🔄 <b>تغییر انقضا:</b>
-📅 قبل: {old_expire_str}
-📅 بعد: {new_expire_str}
-⬆️ افزایش: +{days_diff} روز"""
+🔄 <b>Expiry Change:</b>
+📅 Before: {old_expire_str}
+📅 After: {new_expire_str}
+⬆️ Extended: +{days_diff} days"""
     
     elif "status_to_on_hold" in trigger_reason:
         message += f"""
 
-🔄 <b>تغییر وضعیت:</b>
-⚡ قبل: {old_status}
-⚡ بعد: {new_status}"""
+🔄 <b>Status Change:</b>
+⚡ Before: {old_status}
+⚡ After: {new_status}"""
 
     return message
 

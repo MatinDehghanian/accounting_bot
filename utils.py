@@ -6,7 +6,7 @@ import re
 
 
 def format_bytes(bytes_value: int) -> str:
-    """تبدیل بایت به فرمت قابل خواندن"""
+    """Convert bytes to human-readable format"""
     if not bytes_value:
         return "0 B"
     
@@ -34,13 +34,13 @@ def parse_datetime(date_string: Optional[str]) -> Optional[datetime]:
 
 
 def format_persian_datetime(dt_string: Optional[str]) -> str:
-    """Format datetime to Persian readable format"""
+    """Format datetime to Persian (Jalali) readable format"""
     if not dt_string:
-        return "نامشخص"
+        return "Unknown"
     
     dt = parse_datetime(dt_string)
     if not dt:
-        return "نامشخص"
+        return "Unknown"
     
     # Convert to Tehran timezone (UTC+3:30)
     tehran_dt = dt.astimezone(timezone(timedelta(hours=3, minutes=30)))
@@ -81,11 +81,11 @@ def calculate_days_left(expire_str: Optional[str]) -> Optional[int]:
 def get_status_emoji(status: str) -> str:
     """Get emoji for user status"""
     status_emojis = {
-        "active": "✅ فعال",
-        "disabled": "❌ غیرفعال", 
-        "limited": "🪫 محدود",
-        "expired": "📅 منقضی",
-        "on_hold": "🕔 در انتظار"
+        "active": "✅ Active",
+        "disabled": "❌ Disabled", 
+        "limited": "🪫 Limited",
+        "expired": "📅 Expired",
+        "on_hold": "🕔 On Hold"
     }
     return status_emojis.get(status, f"❓ {status}")
 
@@ -137,17 +137,17 @@ def safe_get_nested(data: Dict, *keys, default=None) -> Any:
 
 def format_user_info(user_data: Dict) -> str:
     """Format user information for display"""
-    username = user_data.get('username', 'نامشخص')
-    user_id = user_data.get('id', 'نامشخص')
+    username = user_data.get('username', 'Unknown')
+    user_id = user_data.get('id', 'Unknown')
     status = get_status_emoji(user_data.get('status', 'unknown'))
     
     expire = user_data.get('expire')
-    expire_str = format_persian_datetime(expire) if expire else 'نامحدود'
+    expire_str = format_persian_datetime(expire) if expire else 'Unlimited'
     
     data_limit = user_data.get('data_limit', 0)
     used_traffic = user_data.get('used_traffic', 0)
     
-    data_limit_str = format_bytes(data_limit) if data_limit else 'نامحدود'
+    data_limit_str = format_bytes(data_limit) if data_limit else 'Unlimited'
     used_traffic_str = format_bytes(used_traffic)
     
     usage_percent = (used_traffic / data_limit * 100) if data_limit > 0 else 0
