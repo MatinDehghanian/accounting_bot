@@ -39,6 +39,9 @@ async def receive_webhook(
 ):
     """Receive webhook notifications from PasarGuard panel"""
     
+    # Log incoming request
+    logger.info(f"📥 Webhook received from {request.client.host if request.client else 'unknown'}")
+    
     # Optional: Verify webhook secret
     # expected_secret = "your-webhook-secret"
     # if expected_secret and x_webhook_secret != expected_secret:
@@ -46,22 +49,31 @@ async def receive_webhook(
     
     try:
         # Parse webhook data (should be a list of events)
+        raw_body = await request.body()
+        logger.info(f"📦 Raw webhook body: {raw_body.decode('utf-8')[:500]}")
+        
         events = await request.json()
         
         if not isinstance(events, list):
-            raise HTTPException(status_code=400, detail="Webhook data must be a list of events")
+            logger.warning(f"Webhook data is not a list, wrapping: {type(events)}")
+            events = [events]  # Wrap single event in list
+        
+        logger.info(f"📋 Processing {len(events)} webhook events")
         
         # Process each event
         processed_count = 0
         for event in events:
             try:
+                action = event.get('action', 'unknown')
+                username = event.get('username', 'unknown')
+                logger.info(f"🔄 Processing event: {action} for user {username}")
                 await process_webhook_event(event)
                 processed_count += 1
             except Exception as e:
-                logger.error(f"Error processing event {event.get('username', 'unknown')}: {str(e)}")
+                logger.error(f"❌ Error processing event {event.get('username', 'unknown')}: {str(e)}")
                 continue
         
-        logger.info(f"Processed {processed_count}/{len(events)} webhook events")
+        logger.info(f"✅ Processed {processed_count}/{len(events)} webhook events")
         
         return {"status": "ok", "processed": processed_count, "total": len(events)}
     
@@ -307,6 +319,72 @@ def create_user_updated_message(event: Dict, old_snapshot: Dict, trigger_reason:
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/webhook/test")
+async def webhook_test():
+    """Test endpoint to verify webhook URL is accessible"""
+    sync_status = await db.get_sync_status("initial_sync_complete")
+    admin_count = len(await db.get_all_admin_topics())
+    
+    return {
+        "status": "ok",
+        "message": "Webhook endpoint is accessible",
+        "sync_enabled": sync_status == "true",
+        "registered_admins": admin_count,
+        "webhook_url": "/webhook (POST)",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.post("/webhook/simulate")
+async def simulate_webhook(request: Request):
+    """Simulate a webhook event for testing (use only in development)"""
+    try:
+        data = await request.json()
+        
+        # Create a test event if not provided
+        if not data:
+            data = [{
+                "action": "user_created",
+                "username": "test_user",
+                "send_at": int(datetime.now().timestamp()),
+                "user": {
+                    "id": 999,
+                    "username": "test_user",
+                    "status": "active",
+                    "expire": datetime.now(timezone.utc).isoformat(),
+                    "data_limit": 10737418240
+                },
+                "by": {
+                    "id": 1,
+                    "username": "test_admin",
+                    "telegram_id": None  # Will use fallback
+                }
+            }]
+        
+        logger.info(f"Simulating webhook with data: {data}")
+        
+        # Process like a real webhook
+        if not isinstance(data, list):
+            data = [data]
+        
+        processed = 0
+        for event in data:
+            try:
+                await process_webhook_event(event)
+                processed += 1
+            except Exception as e:
+                logger.error(f"Simulation error: {e}")
+        
+        return {
+            "status": "simulated",
+            "processed": processed,
+            "total": len(data)
+        }
+    except Exception as e:
+        logger.error(f"Simulation failed: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/stats")
