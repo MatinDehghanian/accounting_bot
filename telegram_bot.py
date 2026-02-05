@@ -58,8 +58,11 @@ class TelegramBot:
         # Menu navigation callbacks
         self.dp.callback_query(F.data.startswith(MENU_PREFIX))(self.handle_menu_callback)
         
-        # Accounting action callbacks (paid, unpaid, settlement)
-        self.dp.callback_query(F.data.startswith(("paid:", "unpaid:", "add_settlement:")))(self.handle_accounting_callback)
+        # Accounting action callbacks (paid, unpaid, settlement, pricing, dismiss)
+        self.dp.callback_query(F.data.startswith((
+            "paid:", "unpaid:", "add_settlement:", 
+            "set_price:", "dismiss:", "price_"
+        )))(self.handle_accounting_callback)
         
         logger.info("Telegram bot initialized with button navigation")
 
