@@ -2,7 +2,12 @@ from fastapi import FastAPI, Request, HTTPException, Header
 from typing import List, Dict, Optional
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+# Load environment variables first
+load_dotenv()
 
 from database import Database
 from telegram_bot import TelegramBot, send_to_admin_topic
@@ -20,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize components
 app = FastAPI(title="Accounting Bot Webhook Receiver")
-db = Database()
+db = Database()  # Will use DB_PATH from environment
 telegram_bot = TelegramBot()
 
 

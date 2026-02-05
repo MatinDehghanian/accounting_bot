@@ -40,6 +40,7 @@ async def lifespan(app):
     # Set fallback chat/topic
     telegram_bot.fallback_chat_id = os.getenv('FALLBACK_CHAT_ID')
     telegram_bot.fallback_topic_id = os.getenv('FALLBACK_TOPIC_ID')
+    telegram_bot.backup_topic_id = os.getenv('BACKUP_TOPIC_ID')
     
     # Initialize Panel API client if credentials provided
     panel_url = os.getenv('PANEL_API_URL')
@@ -55,6 +56,9 @@ async def lifespan(app):
         logger.info(f"📡 Panel API client configured for: {panel_url}")
     else:
         logger.warning("⚠️ Panel API credentials not configured - admin sync disabled")
+    
+    # Create backup topic if not exists
+    await create_backup_topic_if_needed()
     
     # Start telegram bot polling in background
     polling_task = asyncio.create_task(start_telegram_polling())
@@ -76,6 +80,86 @@ async def lifespan(app):
         await telegram_bot.bot.session.close()
     
     logger.info("✅ Shutdown complete")
+
+
+async def create_backup_topic_if_needed():
+    """Create backup topic for automated messages if not exists"""
+    try:
+        chat_id = telegram_bot.fallback_chat_id
+        
+        if not chat_id or not chat_id.lstrip('-').isdigit():
+            logger.warning("⚠️ Cannot create backup topic - FALLBACK_CHAT_ID not set correctly")
+            return
+        
+        # Check if backup topic already exists in database
+        backup_topic_id = await db.get_sync_status("backup_topic_id")
+        
+        if backup_topic_id:
+            telegram_bot.backup_topic_id = backup_topic_id
+            logger.info(f"📂 Using existing backup topic: {backup_topic_id}")
+            return
+        
+        # Check if provided via env
+        if telegram_bot.backup_topic_id:
+            await db.set_sync_status("backup_topic_id", telegram_bot.backup_topic_id)
+            logger.info(f"📂 Using configured backup topic: {telegram_bot.backup_topic_id}")
+            return
+        
+        # Create new backup topic
+        try:
+            topic = await telegram_bot.bot.create_forum_topic(
+                chat_id=int(chat_id),
+                name="📦 Auto Backups",
+                icon_custom_emoji_id=None
+            )
+            telegram_bot.backup_topic_id = str(topic.message_thread_id)
+            await db.set_sync_status("backup_topic_id", telegram_bot.backup_topic_id)
+            logger.info(f"📂 Created backup topic: {telegram_bot.backup_topic_id}")
+            
+            # Send welcome message to backup topic
+            await telegram_bot.bot.send_message(
+                chat_id=int(chat_id),
+                message_thread_id=int(telegram_bot.backup_topic_id),
+                text="📦 <b>Auto Backup Topic</b>\n\nAutomated backup messages and system notifications will be posted here.",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"❌ Could not create backup topic: {e}")
+            
+    except Exception as e:
+        logger.error(f"Error in create_backup_topic_if_needed: {e}")
+
+
+async def send_backup_message(message: str, file_path: str = None):
+    """Send a message to the backup topic, optionally with a file"""
+    try:
+        chat_id = telegram_bot.fallback_chat_id
+        topic_id = telegram_bot.backup_topic_id
+        
+        if not chat_id or not topic_id:
+            logger.warning("Cannot send backup message - backup topic not configured")
+            return False
+        
+        kwargs = {
+            'chat_id': int(chat_id),
+            'message_thread_id': int(topic_id),
+            'parse_mode': 'HTML'
+        }
+        
+        if file_path:
+            from aiogram.types import FSInputFile
+            document = FSInputFile(file_path)
+            kwargs['document'] = document
+            kwargs['caption'] = message
+            await telegram_bot.bot.send_document(**kwargs)
+        else:
+            kwargs['text'] = message
+            await telegram_bot.bot.send_message(**kwargs)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error sending backup message: {e}")
+        return False
 
 
 async def start_telegram_polling():

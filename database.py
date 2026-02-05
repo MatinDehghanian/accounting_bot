@@ -3,12 +3,17 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
+# Get database path from environment variable
+DEFAULT_DB_PATH = os.getenv('DB_PATH', 'accounting_bot.db')
+
 class Database:
-    def __init__(self, db_path: str = "accounting_bot.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or DEFAULT_DB_PATH
+        logger.info(f"Database path: {self.db_path}")
 
     async def init_db(self):
         """Initialize database tables"""
@@ -27,20 +32,42 @@ class Database:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS payments (
                     username TEXT PRIMARY KEY,
-                    payment_status TEXT CHECK(payment_status IN ('Paid', 'Unpaid', 'Unknown')) DEFAULT 'Unknown',
+                    payment_status TEXT CHECK(payment_status IN ('Paid', 'Unpaid', 'Dismissed', 'Unknown')) DEFAULT 'Unknown',
+                    price TEXT,
                     last_set_by TEXT,
                     last_set_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # User prices table
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_prices (
+                    username TEXT PRIMARY KEY,
+                    price TEXT NOT NULL,
+                    set_by TEXT NOT NULL,
+                    set_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
             # Settlement list table
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS settlement_list (
-                    username TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    admin_telegram_id TEXT NOT NULL,
+                    price TEXT,
                     added_by TEXT NOT NULL,
                     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_active BOOLEAN DEFAULT 1
+                    is_checked_out BOOLEAN DEFAULT 0,
+                    checked_out_at TIMESTAMP,
+                    checked_out_by TEXT
                 )
+            """)
+            
+            # Create index for faster lookups
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_settlement_admin 
+                ON settlement_list(admin_telegram_id, is_checked_out)
             """)
 
             # Admin topics mapping table
@@ -141,14 +168,90 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def add_to_settlement(self, username: str, added_by: str):
+    async def add_to_settlement(self, username: str, admin_telegram_id: str, price: str, added_by: str):
         """Add user to settlement list"""
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                INSERT OR REPLACE INTO settlement_list (username, added_by, added_at, is_active)
-                VALUES (?, ?, ?, 1)
-            """, (username, added_by, datetime.now(timezone.utc).isoformat()))
+            # Check if already in active settlement
+            cursor = await db.execute(
+                "SELECT id FROM settlement_list WHERE username = ? AND admin_telegram_id = ? AND is_checked_out = 0",
+                (username, admin_telegram_id)
+            )
+            existing = await cursor.fetchone()
+            
+            if existing:
+                # Update price if exists
+                await db.execute("""
+                    UPDATE settlement_list SET price = ?, added_by = ?, added_at = ?
+                    WHERE id = ?
+                """, (price, added_by, datetime.now(timezone.utc).isoformat(), existing[0]))
+            else:
+                # Insert new
+                await db.execute("""
+                    INSERT INTO settlement_list (username, admin_telegram_id, price, added_by, added_at, is_checked_out)
+                    VALUES (?, ?, ?, ?, ?, 0)
+                """, (username, admin_telegram_id, price, added_by, datetime.now(timezone.utc).isoformat()))
             await db.commit()
+
+    async def get_admin_settlement_list(self, admin_telegram_id: str, checked_out: bool = False) -> List[Dict]:
+        """Get settlement list for an admin"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT s.*, p.price as user_price 
+                FROM settlement_list s
+                LEFT JOIN user_prices p ON s.username = p.username
+                WHERE s.admin_telegram_id = ? AND s.is_checked_out = ?
+                ORDER BY s.added_at DESC
+            """, (admin_telegram_id, 1 if checked_out else 0))
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def checkout_settlement(self, admin_telegram_id: str, checked_out_by: str) -> int:
+        """Checkout all active settlement items for an admin"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("""
+                UPDATE settlement_list 
+                SET is_checked_out = 1, checked_out_at = ?, checked_out_by = ?
+                WHERE admin_telegram_id = ? AND is_checked_out = 0
+            """, (datetime.now(timezone.utc).isoformat(), checked_out_by, admin_telegram_id))
+            await db.commit()
+            return cursor.rowcount
+
+    async def get_settlement_total(self, admin_telegram_id: str) -> Dict:
+        """Get total settlement amount for an admin"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Get items with prices
+            cursor = await db.execute("""
+                SELECT s.username, COALESCE(s.price, p.price, '0') as price
+                FROM settlement_list s
+                LEFT JOIN user_prices p ON s.username = p.username
+                WHERE s.admin_telegram_id = ? AND s.is_checked_out = 0
+            """, (admin_telegram_id,))
+            rows = await cursor.fetchall()
+            
+            total = 0
+            count = len(rows)
+            items_with_price = 0
+            items_without_price = 0
+            
+            for row in rows:
+                try:
+                    price = int(row['price']) if row['price'] else 0
+                    if price > 0:
+                        total += price
+                        items_with_price += 1
+                    else:
+                        items_without_price += 1
+                except (ValueError, TypeError):
+                    items_without_price += 1
+            
+            return {
+                'total': total,
+                'count': count,
+                'items_with_price': items_with_price,
+                'items_without_price': items_without_price
+            }
 
     async def log_audit(self, log_type: str, username: Optional[str] = None, 
                        admin_telegram_id: Optional[str] = None, 
@@ -201,4 +304,33 @@ class Database:
                 "DELETE FROM admin_topics WHERE admin_telegram_id = ?",
                 (admin_telegram_id,)
             )
+            await db.commit()
+
+    async def set_user_price(self, username: str, price: str, set_by: str):
+        """Set price for a user"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT OR REPLACE INTO user_prices (username, price, set_by, set_at)
+                VALUES (?, ?, ?, ?)
+            """, (username, price, set_by, datetime.now(timezone.utc).isoformat()))
+            await db.commit()
+
+    async def get_user_price(self, username: str) -> Optional[Dict]:
+        """Get price for a user"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM user_prices WHERE username = ?",
+                (username,)
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def dismiss_payment(self, username: str, dismissed_by: str):
+        """Mark user as dismissed (no payment needed)"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT OR REPLACE INTO payments (username, payment_status, last_set_by, last_set_at)
+                VALUES (?, 'Dismissed', ?, ?)
+            """, (username, dismissed_by, datetime.now(timezone.utc).isoformat()))
             await db.commit()

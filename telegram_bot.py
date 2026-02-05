@@ -36,6 +36,9 @@ class TelegramBot:
         # Default fallback chat/topic for unmapped admins
         self.fallback_chat_id = None
         self.fallback_topic_id = None
+        
+        # Backup topic for automated messages
+        self.backup_topic_id = None
 
     async def init(self, token: str = None):
         """Initialize telegram bot"""
@@ -68,7 +71,11 @@ class TelegramBot:
                 InlineKeyboardButton(text="👥 Admin List", callback_data=f"{MENU_PREFIX}admins")
             ],
             [
-                InlineKeyboardButton(text="🔄 Sync Admins", callback_data=f"{MENU_PREFIX}sync_admins"),
+                InlineKeyboardButton(text="� My Settlement", callback_data=f"{MENU_PREFIX}my_settlement"),
+                InlineKeyboardButton(text="💳 Checkout", callback_data=f"{MENU_PREFIX}checkout")
+            ],
+            [
+                InlineKeyboardButton(text="�🔄 Sync Admins", callback_data=f"{MENU_PREFIX}sync_admins"),
                 InlineKeyboardButton(text="⚡ Toggle Sync", callback_data=f"{MENU_PREFIX}sync")
             ],
             [
@@ -137,6 +144,12 @@ Select an option below:"""
                 await self.show_settings(callback)
             elif action.startswith("set_"):
                 await self.handle_settings_action(callback, action)
+            elif action == "my_settlement":
+                await self.show_my_settlement(callback)
+            elif action == "checkout":
+                await self.handle_checkout(callback)
+            elif action == "confirm_checkout":
+                await self.confirm_checkout(callback)
             elif action == "help":
                 await self.show_help(callback)
             elif action == "about":
@@ -524,6 +537,129 @@ Each notification includes buttons:
         )
         await callback.answer()
 
+    async def show_my_settlement(self, callback: CallbackQuery):
+        """Show settlement list for the current admin"""
+        admin_telegram_id = str(callback.from_user.id)
+        
+        # Get admin's settlement list
+        settlement_items = await self.db.get_admin_settlement_list(admin_telegram_id, checked_out=False)
+        totals = await self.db.get_settlement_total(admin_telegram_id)
+        
+        if not settlement_items:
+            text = """📋 <b>My Settlement List</b>
+
+📝 No pending items in your settlement list.
+
+<i>Add users to settlement using the "➕ Add to Settlement" button on user notifications.</i>"""
+        else:
+            text = f"""📋 <b>My Settlement List</b>
+
+<b>Pending Items:</b> {totals['count']}
+<b>With Price:</b> {totals['items_with_price']}
+<b>Without Price:</b> {totals['items_without_price']}
+
+━━━━━━━━━━━━━━━━━━
+"""
+            for i, item in enumerate(settlement_items[:20], 1):  # Limit to 20 items
+                price = item.get('price') or item.get('user_price') or '-'
+                if price and price != '-':
+                    try:
+                        price_int = int(price)
+                        price = f"{price_int:,}" if price_int >= 1000 else price
+                    except:
+                        pass
+                text += f"{i}. <code>{item['username']}</code> - {price}\n"
+            
+            if len(settlement_items) > 20:
+                text += f"\n... and {len(settlement_items) - 20} more items"
+            
+            text += f"""
+━━━━━━━━━━━━━━━━━━
+💰 <b>Total:</b> {totals['total']:,} Toman
+
+<i>Press "💳 Checkout" to mark all as checked out.</i>"""
+        
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=self.get_back_keyboard()
+        )
+        await callback.answer()
+
+    async def handle_checkout(self, callback: CallbackQuery):
+        """Show checkout confirmation"""
+        admin_telegram_id = str(callback.from_user.id)
+        
+        # Get totals
+        totals = await self.db.get_settlement_total(admin_telegram_id)
+        
+        if totals['count'] == 0:
+            await callback.answer("No items to checkout", show_alert=True)
+            return
+        
+        text = f"""💳 <b>Checkout Confirmation</b>
+
+You are about to checkout:
+• <b>Items:</b> {totals['count']}
+• <b>Total Amount:</b> {totals['total']:,} Toman
+
+⚠️ This will mark all items as checked out with ✅
+They will no longer appear in your settlement list.
+
+<b>Are you sure?</b>"""
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Confirm Checkout", callback_data=f"{MENU_PREFIX}confirm_checkout"),
+                InlineKeyboardButton(text="❌ Cancel", callback_data=f"{MENU_PREFIX}main")
+            ]
+        ])
+        
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        await callback.answer()
+
+    async def confirm_checkout(self, callback: CallbackQuery):
+        """Process the checkout"""
+        admin_telegram_id = str(callback.from_user.id)
+        admin_name = callback.from_user.full_name or callback.from_user.username or "Unknown"
+        
+        # Get totals before checkout
+        totals = await self.db.get_settlement_total(admin_telegram_id)
+        
+        # Perform checkout
+        checked_out_count = await self.db.checkout_settlement(admin_telegram_id, admin_telegram_id)
+        
+        # Log the checkout
+        await self.db.log_audit(
+            log_type="checkout",
+            admin_telegram_id=admin_telegram_id,
+            actor_telegram_id=admin_telegram_id,
+            payload={
+                "count": checked_out_count,
+                "total": totals['total']
+            }
+        )
+        
+        text = f"""✅ <b>Checkout Complete!</b>
+
+<b>Admin:</b> {admin_name}
+<b>Items Checked Out:</b> {checked_out_count}
+<b>Total Amount:</b> {totals['total']:,} Toman
+<b>Time:</b> {format_persian_datetime(datetime.now().isoformat())}
+
+All items have been marked as ✅ checked out."""
+        
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=self.get_back_keyboard()
+        )
+        await callback.answer("Checkout complete ✅", show_alert=True)
+
     async def show_settings(self, callback: CallbackQuery):
         """Show settings menu"""
         # Get current settings
@@ -680,13 +816,37 @@ Each notification includes buttons:
             
             # Process based on action type
             if action_type == "paid":
+                # Check permission - only the admin who owns the user can mark as paid
+                if not await self.check_admin_permission(clicker_id, admin_telegram_id, callback):
+                    return
                 await self.handle_payment_status(callback, username, "Paid", clicker_id, clicker_name, current_time)
             
             elif action_type == "unpaid":
+                if not await self.check_admin_permission(clicker_id, admin_telegram_id, callback):
+                    return
                 await self.handle_payment_status(callback, username, "Unpaid", clicker_id, clicker_name, current_time)
             
             elif action_type == "add_settlement":
-                await self.handle_add_settlement(callback, username, clicker_id, clicker_name, current_time)
+                if not await self.check_admin_permission(clicker_id, admin_telegram_id, callback):
+                    return
+                await self.handle_add_settlement(callback, username, admin_telegram_id, clicker_id, clicker_name, current_time)
+            
+            elif action_type == "set_price":
+                if not await self.check_admin_permission(clicker_id, admin_telegram_id, callback):
+                    return
+                await self.handle_set_price(callback, username, admin_telegram_id, event_key)
+            
+            elif action_type == "dismiss":
+                if not await self.check_admin_permission(clicker_id, admin_telegram_id, callback):
+                    return
+                await self.handle_dismiss(callback, username, clicker_id, clicker_name, current_time)
+            
+            elif action_type.startswith("price_"):
+                if not await self.check_admin_permission(clicker_id, admin_telegram_id, callback):
+                    return
+                # Handle price selection (price_50, price_100, etc.)
+                price = action_type.replace("price_", "")
+                await self.handle_price_selected(callback, username, price, admin_telegram_id, clicker_id, clicker_name, current_time)
             
             # Log the action
             await self.db.log_audit(
@@ -736,12 +896,24 @@ Each notification includes buttons:
             logger.error(f"Error editing message: {str(e)}")
             await callback.answer("Marked but error updating message")
 
-    async def handle_add_settlement(self, callback: CallbackQuery, username: str, 
+    async def check_admin_permission(self, clicker_id: str, admin_telegram_id: str, callback: CallbackQuery) -> bool:
+        """Check if the clicker is allowed to edit this user's data"""
+        # Admin can only edit their own users
+        if clicker_id != admin_telegram_id:
+            await callback.answer("⛔ You can only manage your own users", show_alert=True)
+            return False
+        return True
+
+    async def handle_add_settlement(self, callback: CallbackQuery, username: str, admin_telegram_id: str,
                                    clicker_id: str, clicker_name: str, current_time: str):
         """Handle add to settlement callbacks"""
         
-        # Add to settlement list
-        await self.db.add_to_settlement(username, clicker_id)
+        # Get user price if exists
+        user_price = await self.db.get_user_price(username)
+        price = user_price['price'] if user_price else None
+        
+        # Add to settlement list with admin info
+        await self.db.add_to_settlement(username, admin_telegram_id, price, clicker_id)
         
         # Update message
         original_text = callback.message.text or callback.message.caption
@@ -752,7 +924,8 @@ Each notification includes buttons:
             return
         
         # Add settlement line
-        settlement_line = f"\n➕ Added to settlement list by {clicker_name} at {current_time}"
+        price_text = f" ({price} Toman)" if price else ""
+        settlement_line = f"\n➕ Added to settlement list{price_text} by {clicker_name} at {current_time}"
         new_text = original_text + settlement_line
         new_text = truncate_text(new_text)
         
@@ -762,6 +935,154 @@ Each notification includes buttons:
         except Exception as e:
             logger.error(f"Error editing message: {str(e)}")
             await callback.answer("Added but error updating message")
+
+    async def handle_set_price(self, callback: CallbackQuery, username: str, 
+                              admin_telegram_id: str, event_key: str):
+        """Handle set price button - show price options"""
+        
+        # Create price selection keyboard
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="50K",
+                    callback_data=create_callback_data("price_50000", username, admin_telegram_id, event_key)
+                ),
+                InlineKeyboardButton(
+                    text="100K",
+                    callback_data=create_callback_data("price_100000", username, admin_telegram_id, event_key)
+                ),
+                InlineKeyboardButton(
+                    text="150K",
+                    callback_data=create_callback_data("price_150000", username, admin_telegram_id, event_key)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="200K",
+                    callback_data=create_callback_data("price_200000", username, admin_telegram_id, event_key)
+                ),
+                InlineKeyboardButton(
+                    text="250K",
+                    callback_data=create_callback_data("price_250000", username, admin_telegram_id, event_key)
+                ),
+                InlineKeyboardButton(
+                    text="300K",
+                    callback_data=create_callback_data("price_300000", username, admin_telegram_id, event_key)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="400K",
+                    callback_data=create_callback_data("price_400000", username, admin_telegram_id, event_key)
+                ),
+                InlineKeyboardButton(
+                    text="500K",
+                    callback_data=create_callback_data("price_500000", username, admin_telegram_id, event_key)
+                ),
+                InlineKeyboardButton(
+                    text="Custom",
+                    callback_data=create_callback_data("price_custom", username, admin_telegram_id, event_key)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Cancel",
+                    callback_data=create_callback_data("price_cancel", username, admin_telegram_id, event_key)
+                )
+            ]
+        ])
+        
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        await callback.answer("Select price")
+
+    async def handle_price_selected(self, callback: CallbackQuery, username: str, 
+                                   price: str, admin_telegram_id: str, clicker_id: str, 
+                                   clicker_name: str, current_time: str):
+        """Handle price selection"""
+        
+        if price == "cancel":
+            # Restore original keyboard
+            original_keyboard = create_accounting_keyboard(
+                username, 
+                callback.data.split(":")[2] if ":" in callback.data else "",
+                callback.data.split(":")[3] if ":" in callback.data else ""
+            )
+            await callback.message.edit_reply_markup(reply_markup=original_keyboard)
+            await callback.answer("Cancelled")
+            return
+        
+        if price == "custom":
+            await callback.answer("Reply to this message with the custom price", show_alert=True)
+            return
+        
+        # Format price for display
+        price_int = int(price)
+        if price_int >= 1000:
+            price_display = f"{price_int // 1000}K"
+        else:
+            price_display = price
+        
+        # Save price to database
+        await self.db.set_user_price(username, price, clicker_id)
+        
+        # Update message
+        original_text = callback.message.text or callback.message.caption
+        
+        # Remove any existing price line
+        lines = original_text.split('\n')
+        filtered_lines = [line for line in lines if not line.startswith('💰 Price:')]
+        
+        # Add price line
+        price_line = f"\n💰 Price: {price_display} Toman set by {clicker_name}"
+        new_text = '\n'.join(filtered_lines) + price_line
+        new_text = truncate_text(new_text)
+        
+        # Restore original keyboard
+        callback_parts = parse_callback_data(callback.data)
+        original_keyboard = create_accounting_keyboard(
+            username,
+            callback_parts.get('admin_telegram_id', ''),
+            callback_parts.get('event_key', '')
+        )
+        
+        try:
+            await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=original_keyboard)
+            await callback.answer(f"Price set: {price_display} ✅")
+        except Exception as e:
+            logger.error(f"Error editing message: {str(e)}")
+            await callback.answer("Price set but error updating message")
+
+    async def handle_dismiss(self, callback: CallbackQuery, username: str, 
+                            clicker_id: str, clicker_name: str, current_time: str):
+        """Handle dismiss button - mark user as no payment needed"""
+        
+        # Check if already dismissed
+        current_payment = await self.db.get_payment_status(username)
+        if current_payment and current_payment['payment_status'] == 'Dismissed':
+            await callback.answer("Already dismissed", show_alert=False)
+            return
+        
+        # Dismiss payment
+        await self.db.dismiss_payment(username, clicker_id)
+        
+        # Update message
+        original_text = callback.message.text or callback.message.caption
+        
+        # Remove any existing payment/dismiss status line
+        lines = original_text.split('\n')
+        filtered_lines = [line for line in lines if not any(marker in line for marker in ['✅ Paid', '❌ Unpaid', '🚫 Dismissed'])]
+        
+        # Add dismiss line
+        dismiss_line = f"\n🚫 Dismissed by {clicker_name} at {current_time}"
+        new_text = '\n'.join(filtered_lines) + dismiss_line
+        new_text = truncate_text(new_text)
+        
+        try:
+            await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=callback.message.reply_markup)
+            await callback.answer("Dismissed - no payment needed ✅")
+        except Exception as e:
+            logger.error(f"Error editing message: {str(e)}")
+            await callback.answer("Dismissed but error updating message")
 
 
 def create_accounting_keyboard(username: str, admin_telegram_id: str, event_key: str) -> InlineKeyboardMarkup:
@@ -776,6 +1097,16 @@ def create_accounting_keyboard(username: str, admin_telegram_id: str, event_key:
             InlineKeyboardButton(
                 text="❌ Unpaid", 
                 callback_data=create_callback_data("unpaid", username, admin_telegram_id, event_key)
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💰 Set Price",
+                callback_data=create_callback_data("set_price", username, admin_telegram_id, event_key)
+            ),
+            InlineKeyboardButton(
+                text="🚫 Dismiss",
+                callback_data=create_callback_data("dismiss", username, admin_telegram_id, event_key)
             )
         ],
         [
