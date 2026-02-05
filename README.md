@@ -237,6 +237,39 @@ docker run -d \
   accounting-bot
 ```
 
+## Updating
+
+### Quick Update (Recommended)
+
+```bash
+chmod +x update.sh
+./update.sh
+```
+
+The update script will:
+- Backup your `.env` and database
+- Pull latest changes from git
+- Rebuild and restart (Docker or venv)
+- Show recent logs
+
+### Manual Update
+
+**Docker:**
+```bash
+git pull origin main
+docker-compose down
+docker-compose up -d --build
+```
+
+**Venv:**
+```bash
+git pull origin main
+source venv/bin/activate
+pip install -r requirements.txt
+# Restart the bot (Ctrl+C and run again, or restart systemd service)
+sudo systemctl restart accounting-bot
+```
+
 ## Support
 
 For questions and issues:
