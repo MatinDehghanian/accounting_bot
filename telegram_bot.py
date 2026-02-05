@@ -854,6 +854,15 @@ async def send_to_admin_topic(admin_telegram_id: str, admin_username: str, messa
         logger.error("Telegram bot not initialized")
         return
     
+    # Get fallback values
+    final_fallback_chat = fallback_chat_id or telegram_bot.fallback_chat_id
+    final_fallback_topic = fallback_topic_id or telegram_bot.fallback_topic_id
+    
+    # Validate fallback chat ID format
+    if final_fallback_chat and not final_fallback_chat.lstrip('-').isdigit():
+        logger.error(f"Invalid FALLBACK_CHAT_ID: '{final_fallback_chat}' - must be a number like -1001234567890")
+        return
+    
     try:
         # Auto-register admin if new (creates topic automatically)
         chat_id, topic_id = await auto_register_admin(
@@ -861,13 +870,14 @@ async def send_to_admin_topic(admin_telegram_id: str, admin_username: str, messa
             admin_username=admin_username,
             db=db,
             bot=telegram_bot.bot,
-            target_chat_id=fallback_chat_id or telegram_bot.fallback_chat_id
+            target_chat_id=final_fallback_chat
         )
         
-        # Use fallback if no chat_id
+        # Use the returned values, fall back only if empty
         if not chat_id:
-            chat_id = fallback_chat_id or telegram_bot.fallback_chat_id
-            topic_id = fallback_topic_id or telegram_bot.fallback_topic_id
+            chat_id = final_fallback_chat
+        if not topic_id:
+            topic_id = final_fallback_topic
         
         if not chat_id:
             logger.error(f"No chat_id available for admin {admin_telegram_id}. Set FALLBACK_CHAT_ID in .env")
