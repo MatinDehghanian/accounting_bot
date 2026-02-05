@@ -1,111 +1,118 @@
-# PasarGuard Accounting Bot
+# Accounting Bot
 
 <div align="center">
   <img src="https://img.shields.io/badge/Python-3.8+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
-  <img src="https://img.shields.io/github/workflow/status/PasarGuard/accounting-bot/CI/CD" alt="Build Status">
-  <img src="https://img.shields.io/codecov/c/github/PasarGuard/accounting-bot" alt="Coverage">
 </div>
 
 <div align="center">
-  <h3>🤖 ربات تلگرام هوشمند برای مدیریت حساب‌وکتاب کاربران</h3>
-  <p>سیستم پیشرفته پردازش webhook های PasarGuard با قابلیت‌های تعاملی و مسیریابی هوشمند</p>
+  <h3>🤖 Smart Telegram Bot for User Accounting Management</h3>
+  <p>Advanced webhook processing system with interactive buttons and smart routing</p>
 </div>
 
 ---
 
-## ویژگی‌ها
+## Features
 
-- 🔄 **پردازش خودکار webhook ها**: دریافت و پردازش رویدادهای `user_created` و `user_updated`
-- 📍 **مسیریابی هوشمند**: ارسال پیام به تاپیک اختصاصی هر ادمین
-- ⚡ **فیلترینگ پیشرفته**: ارسال پیام فقط در شرایط مشخص (افزایش انقضا ≥7 روز یا تغییر به on_hold)
-- 🎮 **دکمه‌های تعاملی**: پیگیری وضعیت پرداخت و اضافه کردن به لیست تسویه
-- 💾 **پایگاه داده محلی**: ذخیره snapshot ها و اطلاعات حساب‌وکتاب
-- 🔄 **همگام‌سازی**: امکان sync اولیه اطلاعات کاربران
+- 🔄 **Automatic Webhook Processing**: Receives and processes `user_created` and `user_updated` events
+- 📍 **Smart Routing**: Sends messages to each admin's dedicated topic (auto-created)
+- ⚡ **Advanced Filtering**: Sends messages only under specific conditions (expire increase ≥7 days or status change to on_hold)
+- 🎮 **Interactive Buttons**: Track payment status and add to settlement list with inline buttons
+- 💾 **Local Database**: Stores snapshots and accounting information
+- 👥 **Auto Admin Registration**: Automatically registers admins and creates topics when they first appear
+- 🔘 **Button-Based UI**: No commands needed - everything works with inline buttons
 
-## نصب و راه‌اندازی
+## Installation
 
-### 1. کلون کردن پروژه
+### 1. Clone the Project
 
 ```bash
 git clone <repository-url>
 cd accounting_bot
 ```
 
-### 2. نصب خودکار
+### 2. Automatic Setup
 
 ```bash
 chmod +x setup.sh
 ./setup.sh
 ```
 
-### 3. تنظیمات
+### 3. Configuration
 
-`.env` فایل را ویرایش کنید:
+Edit the `.env` file:
 
 ```bash
-# Telegram Bot Token (از @BotFather دریافت کنید)
+# Telegram Bot Token (get from @BotFather)
 BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
 
-# Secret وبهوک (اختیاری)
+# Webhook Secret (optional)
 WEBHOOK_SECRET=your_webhook_secret_here
 
-# تاپیک fallback برای ادمین‌های بدون mapping
+# Fallback chat for admins (REQUIRED - your forum group ID)
 FALLBACK_CHAT_ID=-1001234567890
-FALLBACK_TOPIC_ID=123
+FALLBACK_TOPIC_ID=
 
-# سایر تنظیمات...
+# Server Settings
+HOST=0.0.0.0
+PORT=8080
+DEBUG=False
 ```
 
-### 4. راه‌اندازی
+### 4. Run
 
 ```bash
-# فعال کردن virtual environment
+# Activate virtual environment
 source venv/bin/activate
 
-# اجرای ربات
+# Run the bot
 python main.py
 ```
 
-## استفاده
+## Usage
 
-### دستورات ربات
+### Button-Based Interface
 
-- `/start` - شروع و خوش‌آمدگویی
-- `/help` - راهنمای کامل
-- `/sync` - همگام‌سازی اولیه کاربران
-- `/set_admin_topic` - تنظیم تاپیک اختصاصی برای ادمین
-- `/list_admins` - مشاهده ادمین‌ها و تاپیک‌ها
-- `/stats` - آمار سیستم
+The bot uses **inline buttons** instead of commands. Just send any message to the bot and you'll see the main menu:
 
-### تنظیم تاپیک ادمین
+**Main Menu Options:**
+- 📊 **Statistics** - View system stats and admin count
+- 👥 **Admin List** - See all registered admins and their topics
+- 🔄 **Enable Sync** - Enable/disable processing of user_updated events
+- 📖 **Help** - How the bot works
+- ℹ️ **About** - Bot information
 
-1. دستور `/set_admin_topic` را اجرا کنید
-2. Telegram ID ادمین را وارد کنید (از @userinfobot دریافت کنید)
-3. Chat ID گروه مقصد را وارد کنید
-4. در صورت استفاده از Topic، Topic ID را هم اضافه کنید
+### Automatic Admin Topic Creation
 
-### تنظیم Webhook در پنل
+When an admin creates or updates a user through the panel:
 
-در تنظیمات webhook پنل PasarGuard:
+1. Bot receives the webhook event
+2. If it's a new admin, bot automatically:
+   - Registers the admin
+   - Creates a dedicated forum topic for them
+3. Sends the notification to the admin's topic
+
+### Webhook Setup in Panel
+
+In your panel's webhook settings:
 
 ```
 URL: https://your-server.com/webhook
-Secret: your_webhook_secret_here (اختیاری)
+Secret: your_webhook_secret_here (optional)
 ```
 
-## ساختار پیام‌ها
+## Message Structure
 
 ### user_created
-همیشه ارسال می‌شود:
+Always sent:
 
 ```
-🧾 حساب‌وکتاب | user_created
+🧾 Accounting | user_created
 
 👤 User: username (id: 123)  
 👮 Admin: admin_name (tg_id: 987654321)
 
-جزئیات:
+Details:
 ⚡ Status: active
 📊 Data Limit: 10.0 GB
 📅 Expire: 1403/12/15 - 14:30
@@ -113,84 +120,93 @@ Secret: your_webhook_secret_here (اختیاری)
 ```
 
 ### user_updated  
-فقط در این شرایط ارسال می‌شود:
-- افزایش انقضا حداقل 7 روز
-- تغییر وضعیت به `on_hold`
+Only sent when:
+- Expiry increased by at least 7 days
+- Status changed to `on_hold`
 
-## دکمه‌های تعاملی
+## Interactive Buttons
 
-هر پیام شامل 3 دکمه:
+Each message includes 3 buttons:
 
-- **پرداخت کرد ✅**: ثبت پرداخت موفق
-- **پرداخت نکرد ❌**: ثبت عدم پرداخت  
-- **➕ افزودن به لیست تسویه**: اضافه کردن به فهرست تسویه
+- **✅ Paid**: Mark payment as received
+- **❌ Unpaid**: Mark as not paid  
+- **➕ Add to Settlement**: Add to settlement list
 
-کلیک روی هر دکمه، پیام را بروزرسانی می‌کند و نتیجه را ثبت می‌کند.
+Clicking any button updates the message and records the result.
 
-## ساختار پایگاه داده
+## Database Structure
 
-- `users_snapshot`: عکس‌برداری آخرین وضعیت کاربران
-- `payments`: وضعیت پرداخت هر کاربر
-- `settlement_list`: لیست کاربران نیازمند تسویه
-- `admin_topics`: mapping ادمین‌ها به تاپیک‌ها
-- `audit_log`: لاگ تمام عملیات
+- `users_snapshot`: Latest user state snapshots
+- `payments`: Payment status for each user
+- `settlement_list`: Users requiring settlement
+- `admin_topics`: Admin to topic mappings (auto-created)
+- `audit_log`: Log of all operations
 
 ## API Endpoints
 
-- `POST /webhook` - دریافت webhook های PasarGuard
-- `GET /health` - وضعیت سلامت سیستم
-- `GET /stats` - آمار سیستم
+- `POST /webhook` - Receive panel webhooks
+- `GET /health` - System health status
+- `GET /stats` - System statistics
 
-## نکات مهم
+## Important Notes
 
-1. **همگام‌سازی اولیه**: حتماً قبل از استفاده، دستور `/sync` را اجرا کنید
-2. **تاپیک mapping**: برای هر ادمین تاپیک اختصاصی تنظیم کنید
-3. **Fallback**: پیام‌های ادمین‌های بدون mapping به تاپیک fallback ارسال می‌شود
-4. **لاگ‌ها**: تمام عملیات در audit_log ثبت می‌شود
+1. **Forum Group**: Add bot as admin to a forum-enabled group
+2. **Auto Topics**: Topics are created automatically for each admin
+3. **Fallback**: Set `FALLBACK_CHAT_ID` to your main group ID
+4. **Enable Sync**: Use the "Enable Sync" button before user_updated events work
+5. **Logs**: All operations are recorded in audit_log
 
-## مشکلات رایج
+## Troubleshooting
 
-### خطای "Bot not found"
-- Token ربات را چک کنید
-- ربات را `/start` کنید
+### "Bot not found" error
+- Check bot token
+- `/start` the bot
 
-### خطای "Chat not found"  
-- Chat ID را بررسی کنید
-- ربات را به گروه اضافه کنید
-- مجوزهای ربات را چک کنید
+### "Chat not found" error  
+- Verify Chat ID
+- Add bot to the group as admin
+- Check bot permissions
 
-### پیام‌های user_updated ارسال نمی‌شود
-- اول `/sync` کنید
-- شرایط trigger را چک کنید (7+ روز افزایش انقضا یا تغییر به on_hold)
+### user_updated messages not sending
+- Enable sync using the button in bot menu
+- Check trigger conditions (7+ days expire increase or on_hold status change)
 
-## پیشتیبانی
+### Topics not being created
+- Make sure the group has forum topics enabled
+- Bot needs admin permissions with "Manage Topics" privilege
 
-برای سوالات و مشکلات:
+## Docker Deployment
 
-- 📋 **Issues**: [گزارش مشکل یا پیشنهاد](https://github.com/PasarGuard/accounting-bot/issues)
-- 💬 **Discussions**: [بحث‌های عمومی](https://github.com/PasarGuard/accounting-bot/discussions)
-- 📧 **Email**: support@pasarguard.com
-- 📚 **Wiki**: [مستندات تکمیلی](https://github.com/PasarGuard/accounting-bot/wiki)
+```bash
+# Build and run
+docker-compose up -d
 
-## مشارکت
+# View logs
+docker-compose logs -f
+```
 
-ما از مشارکت جامعه استقبال می‌کنیم! 
+## Support
 
-- 🤝 [راهنمای مشارکت](CONTRIBUTING.md)
-- 🐛 [گزارش باگ](https://github.com/PasarGuard/accounting-bot/issues/new?template=bug_report.md)
-- ✨ [پیشنهاد ویژگی](https://github.com/PasarGuard/accounting-bot/issues/new?template=feature_request.md)
+For questions and issues:
 
-## مجوز
+- 📋 **Issues**: [Report Issue or Suggestion](https://github.com/PasarGuard/accounting-bot/issues)
+- 💬 **Discussions**: [General Discussions](https://github.com/PasarGuard/accounting-bot/discussions)
 
-این پروژه تحت مجوز [MIT License](LICENSE) منتشر شده است.
+## Contributing
 
-## تشکر
+We welcome community contributions! 
 
-از تمام کسانی که در توسعه این پروژه مشارکت کرده‌اند تشکر می‌کنیم ❤️
+- 🤝 [Contributing Guide](CONTRIBUTING.md)
+- 🐛 [Report Bug](https://github.com/PasarGuard/accounting-bot/issues/new?template=bug_report.md)
+- ✨ [Feature Request](https://github.com/PasarGuard/accounting-bot/issues/new?template=feature_request.md)
+
+## License
+
+This project is released under the [MIT License](LICENSE).
 
 ---
 
 <div align="center">
-  <p>ساخته شده با ❤️ توسط <a href="https://github.com/PasarGuard">PasarGuard Team</a></p>
-  <p>⭐ اگر این پروژه برایتان مفید بود، حمایتتان را با دادن ستاره نشان دهید</p>
+  <p>Made with ❤️</p>
+  <p>⭐ If this project was helpful, show your support by giving it a star</p>
 </div>

@@ -1,204 +1,166 @@
-# Contributing to PasarGuard Accounting Bot
+# Contributing to Accounting Bot
 
-ما از مشارکت شما در توسعه این پروژه استقبال می‌کنیم! 
+We welcome your contributions to this project!
 
-## 🚀 شروع سریع
+## 🚀 Quick Start
 
-### Fork کردن پروژه
-1. روی دکمه "Fork" در گیت‌هاب کلیک کنید
-2. Clone کردن fork خودتان:
+### Fork the Project
+1. Click the "Fork" button on GitHub
+2. Clone your fork:
 ```bash
-git clone https://github.com/YOUR_USERNAME/pasarguard-accounting-bot.git
-cd pasarguard-accounting-bot
+git clone https://github.com/YOUR_USERNAME/accounting-bot.git
+cd accounting-bot
 ```
 
-### راه‌اندازی محیط توسعه
+### Setup Development Environment
 ```bash
-# نصب dependencies
+# Install dependencies
 ./setup.sh
 
-# کپی کردن تنظیمات
+# Copy settings
 cp .env.example .env
-# فایل .env را ویرایش کنید
+# Edit the .env file
 
-# اجرای پروژه
+# Run the project
 python main.py
 ```
 
-## 📋 راهنمای مشارکت
+## 📋 Contribution Guide
 
-### انواع مشارکت
+### Types of Contributions
 
-**🐛 گزارش باگ**
-- Issue جدید با برچسب `bug` ایجاد کنید
-- شرح دقیق از مشکل ارائه دهید
-- مراحل تکرار مشکل را بنویسید
+**🐛 Bug Reports**
+- Create a new issue with the `bug` label
+- Provide a detailed description of the problem
+- Include steps to reproduce the issue
 
-**✨ پیشنهاد ویژگی جدید**
-- Issue جدید با برچسب `feature request` ایجاد کنید
-- توضیح دهید چرا این ویژگی مفید است
+**✨ New Feature Suggestions**
+- Create a new issue with the `feature request` label
+- Explain why this feature would be useful
 
-**📖 بهبود مستندات**
-- README یا Comments را بروزرسانی کنید
-- مثال‌های جدید اضافه کنید
+**📖 Documentation Improvements**
+- Update README or Comments
+- Add new examples
 
-**🔧 بهبود کد**
-- Refactoring کد موجود
-- بهبود performance
-- افزودن تست‌ها
+**🔧 Code Improvements**
+- Refactor existing code
+- Improve performance
+- Add tests
 
-### فرآیند توسعه
+### Development Process
 
-1. **Branch جدید ایجاد کنید:**
+1. **Create a new branch:**
 ```bash
 git checkout -b feature/your-feature-name
-# یا
+# or
 git checkout -b fix/bug-description
 ```
 
-2. **تغییرات خود را commit کنید:**
+2. **Commit your changes:**
 ```bash
 git add .
 git commit -m "feat: add new webhook processing feature"
 ```
 
-3. **کد را تست کنید:**
+3. **Test your code:**
 ```bash
-# اجرای تست‌ها
+# Run tests
 pytest
 
-# تست webhook
+# Test webhook
 python test_webhook.py
 ```
 
-4. **Pull Request ایجاد کنید:**
-- توضیح کاملی از تغییرات ارائه دهید
-- Screenshot یا مثال اضافه کنید
-- مراجع issue مرتبط را ذکر کنید
+4. **Create a Pull Request:**
+- Provide a complete description of the changes
+- Add screenshots or examples
+- Reference related issues
 
-## 📏 استانداردهای کد
+## 📏 Code Standards
 
-### Python Style Guide
-- از PEP 8 پیروی کنید
-- خطوط حداکثر 127 کاراکتر
-- از type hints استفاده کنید
-
-### نام‌گذاری
-```python
-# Functions و variables: snake_case
-def process_webhook_event():
-    user_data = {}
-
-# Classes: PascalCase  
-class DatabaseManager:
-    pass
-
-# Constants: UPPER_CASE
-MAX_RETRY_COUNT = 3
-```
-
-### Docstrings
-```python
-def format_persian_datetime(dt_string: Optional[str]) -> str:
-    """
-    Format datetime to Persian readable format
-    
-    Args:
-        dt_string: ISO format datetime string
-        
-    Returns:
-        Formatted Persian date string
-        
-    Example:
-        >>> format_persian_datetime("2026-02-05T10:30:00Z")
-        "1404/11/16 - 14:00"
-    """
-```
+### Python Style
+- Follow PEP 8
+- Use type hints where possible
+- Add docstrings to functions and classes
 
 ### Commit Messages
-از [Conventional Commits](https://www.conventionalcommits.org/) استفاده کنید:
+Use conventional commits format:
+- `feat:` - New feature
+- `fix:` - Bug fix
+- `docs:` - Documentation changes
+- `refactor:` - Code refactoring
+- `test:` - Adding tests
+- `chore:` - Maintenance tasks
 
+### Code Example
+```python
+async def process_webhook(event: Dict) -> bool:
+    """
+    Process a webhook event.
+    
+    Args:
+        event: The webhook event dictionary
+        
+    Returns:
+        True if processed successfully, False otherwise
+    """
+    try:
+        # Implementation
+        return True
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}")
+        return False
 ```
-feat: add payment status tracking
-fix: resolve webhook parsing error  
-docs: update installation guide
-refactor: improve database queries
-test: add webhook endpoint tests
-```
 
-## 🧪 تست‌ها
+## 🧪 Testing
 
-### اجرای تست‌ها
+### Run Tests
 ```bash
-# همه تست‌ها
+# All tests
 pytest
 
-# تست‌های مشخص
-pytest tests/test_webhook.py
+# With coverage
+pytest --cov=. --cov-report=html
 
-# با coverage
-pytest --cov=./
+# Specific test
+pytest test_webhook.py -v
 ```
 
-### نوشتن تست جدید
-```python
-# tests/test_new_feature.py
-import pytest
-from your_module import your_function
+### Write Tests
+- Add tests for new features
+- Ensure tests are isolated
+- Use meaningful test names
 
-def test_your_function():
-    result = your_function(test_input)
-    assert result == expected_output
+## 📁 Project Structure
+
+```
+accounting_bot/
+├── main.py              # Entry point
+├── telegram_bot.py      # Bot logic & handlers
+├── webhook_receiver.py  # FastAPI webhook endpoint
+├── database.py          # Database operations
+├── utils.py             # Utility functions
+├── requirements.txt     # Dependencies
+└── test_webhook.py      # Tests
 ```
 
-## 🔒 Security
+## 🔍 Code Review
 
-- هرگز secrets یا tokens را commit نکنید
-- از environment variables استفاده کنید
-- Input validation را جدی بگیرید
+All pull requests will be reviewed:
 
-## 📝 Documentation
+1. **Functionality**: Does it work correctly?
+2. **Code Quality**: Is it clean and maintainable?
+3. **Tests**: Are there adequate tests?
+4. **Documentation**: Is it well documented?
 
-### README Updates
-- ویژگی‌های جدید را مستند کنید
-- مثال‌های کاربردی اضافه کنید
-- Screenshots و GIF ها مفید هستند
+## 📜 License
 
-### Code Comments
-- کد پیچیده را توضیح دهید
-- منطق business را شرح دهید
-- TODO ها را مشخص کنید
+By contributing, you agree that your contributions will be licensed under the MIT License.
 
-## 🎯 Priority Areas
+## 🙏 Thank You
 
-ما به دنبال کمک در این زمینه‌ها هستیم:
-
-1. **🧪 Test Coverage** - افزودن unit tests و integration tests
-2. **📊 Monitoring** - metrics و logging بهتر  
-3. **🌐 Internationalization** - پشتیبانی از زبان‌های بیشتر
-4. **📱 Mobile Support** - بهبود UX در موبایل
-5. **🚀 Performance** - بهینه‌سازی database queries
-6. **🔐 Security** - security audit و improvements
-
-## 💬 ارتباط
-
-- **Issues**: برای باگ‌ها و پیشنهادات
-- **Discussions**: برای سوالات و بحث‌های کلی
-- **Email**: برای موارد خصوصی و security
-
-## 🏷️ Labels
-
-- `bug` - مشکلات و خرابی‌ها
-- `enhancement` - ویژگی‌های جدید
-- `documentation` - بهبود مستندات
-- `good first issue` - مناسب برای مبتدیان
-- `help wanted` - نیاز به کمک
-- `question` - سوالات
-
-## 📜 Code of Conduct
-
-لطفاً محترمانه و سازنده باشید. ما یک جامعه باز و دوستانه هستیم.
+Thank you for taking the time to contribute! Your help makes this project better for everyone.
 
 ---
 
-🙏 از مشارکت شما متشکریم!
+If you have any questions, feel free to open an issue or start a discussion.
