@@ -1,0 +1,39 @@
+{
+  "name": "pasarguard-accounting-bot",
+  "version": "1.0.0",
+  "description": "🤖 Telegram bot for PasarGuard user accounting management via webhooks",
+  "main": "main.py",
+  "scripts": {
+    "start": "python main.py",
+    "test": "pytest",
+    "test:watch": "pytest-watch",
+    "test:cov": "pytest --cov=./ --cov-report=html",
+    "lint": "flake8 .",
+    "format": "black .",
+    "setup": "./setup.sh",
+    "deploy": "./deploy.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PasarGuard/accounting-bot.git"
+  },
+  "keywords": [
+    "telegram-bot",
+    "webhook", 
+    "accounting",
+    "pasarguard",
+    "python",
+    "fastapi",
+    "sqlite",
+    "docker"
+  ],
+  "author": "PasarGuard Team",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/PasarGuard/accounting-bot/issues"
+  },
+  "homepage": "https://github.com/PasarGuard/accounting-bot#readme",
+  "engines": {
+    "python": ">=3.8"
+  }
+}
