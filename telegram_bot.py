@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 
@@ -11,6 +12,7 @@ from aiogram.types import (
 from aiogram.filters import Command
 
 from database import Database
+from api_client import PanelAPIClient
 from utils import (
     parse_callback_data, create_callback_data, 
     format_persian_datetime, truncate_text
@@ -29,6 +31,7 @@ class TelegramBot:
         self.bot: Optional[Bot] = None
         self.dp: Optional[Dispatcher] = None
         self.db: Optional[Database] = None
+        self.api_client: Optional[PanelAPIClient] = None
         
         # Default fallback chat/topic for unmapped admins
         self.fallback_chat_id = None
@@ -65,10 +68,11 @@ class TelegramBot:
                 InlineKeyboardButton(text="👥 Admin List", callback_data=f"{MENU_PREFIX}admins")
             ],
             [
-                InlineKeyboardButton(text="🔄 Enable Sync", callback_data=f"{MENU_PREFIX}sync"),
-                InlineKeyboardButton(text="📖 Help", callback_data=f"{MENU_PREFIX}help")
+                InlineKeyboardButton(text="🔄 Sync Admins", callback_data=f"{MENU_PREFIX}sync_admins"),
+                InlineKeyboardButton(text="⚡ Toggle Sync", callback_data=f"{MENU_PREFIX}sync")
             ],
             [
+                InlineKeyboardButton(text="📖 Help", callback_data=f"{MENU_PREFIX}help"),
                 InlineKeyboardButton(text="ℹ️ About", callback_data=f"{MENU_PREFIX}about")
             ]
         ])
@@ -124,6 +128,8 @@ Select an option below:"""
                 await self.enable_sync(callback)
             elif action == "sync_disable":
                 await self.disable_sync(callback)
+            elif action == "sync_admins":
+                await self.sync_admins_from_api(callback)
             elif action == "help":
                 await self.show_help(callback)
             elif action == "about":
@@ -294,36 +300,175 @@ user_updated events will be ignored until sync is re-enabled."""
         except Exception as e:
             await callback.answer(f"❌ Error: {str(e)}", show_alert=True)
 
+    async def sync_admins_from_api(self, callback: CallbackQuery):
+        """Sync admins from Panel API and create topics for them"""
+        try:
+            # Check if API client is configured
+            if not self.api_client:
+                text = """⚠️ <b>API Not Configured</b>
+
+To sync admins from the panel, configure these in your .env file:
+
+<code>PANEL_API_URL=https://your-panel.com</code>
+<code>PANEL_USERNAME=admin</code>
+<code>PANEL_PASSWORD=password</code>
+
+Then restart the bot."""
+                
+                await callback.message.edit_text(
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
+                await callback.answer("API not configured", show_alert=True)
+                return
+            
+            # Show loading message
+            await callback.message.edit_text(
+                "🔄 <b>Syncing Admins...</b>\n\nFetching admins from panel API...",
+                parse_mode="HTML"
+            )
+            await callback.answer()
+            
+            # Test API connection
+            if not await self.api_client.test_connection():
+                await callback.message.edit_text(
+                    "❌ <b>Connection Failed</b>\n\nCould not connect to panel API. Check your credentials.",
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
+                return
+            
+            # Fetch all admins from API
+            admins = await self.api_client.get_all_admins()
+            
+            if not admins:
+                await callback.message.edit_text(
+                    "📝 <b>No Admins Found</b>\n\nNo admins returned from the panel API.",
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
+                return
+            
+            # Process each admin
+            created_topics = 0
+            updated_admins = 0
+            errors = 0
+            
+            for admin in admins:
+                admin_username = admin.get('username', 'unknown')
+                admin_telegram_id = admin.get('telegram_id')
+                
+                if not admin_telegram_id:
+                    continue  # Skip admins without telegram_id
+                
+                admin_telegram_id = str(admin_telegram_id)
+                
+                # Check if admin already exists
+                existing = await self.db.get_admin_topic(admin_telegram_id)
+                
+                if existing:
+                    # Update username if changed
+                    if existing['admin_username'] != admin_username:
+                        await self.db.set_admin_topic(
+                            admin_telegram_id=admin_telegram_id,
+                            admin_username=admin_username,
+                            chat_id=existing['chat_id'],
+                            topic_id=existing['topic_id']
+                        )
+                        updated_admins += 1
+                else:
+                    # New admin - create topic if we have fallback chat
+                    topic_id = None
+                    chat_id = self.fallback_chat_id
+                    
+                    if chat_id:
+                        try:
+                            # Try to create a forum topic for this admin
+                            topic = await self.bot.create_forum_topic(
+                                chat_id=int(chat_id),
+                                name=f"👤 {admin_username}"[:128]
+                            )
+                            topic_id = str(topic.message_thread_id)
+                            created_topics += 1
+                            logger.info(f"Created topic for admin: {admin_username}")
+                        except Exception as e:
+                            logger.warning(f"Could not create topic for {admin_username}: {e}")
+                            errors += 1
+                    
+                    # Save admin mapping
+                    await self.db.set_admin_topic(
+                        admin_telegram_id=admin_telegram_id,
+                        admin_username=admin_username,
+                        chat_id=chat_id or "",
+                        topic_id=topic_id
+                    )
+            
+            # Update sync status
+            await self.db.set_sync_status("initial_sync_complete", "true")
+            await self.db.set_sync_status("last_sync", datetime.now().isoformat())
+            
+            # Show results
+            text = f"""✅ <b>Admin Sync Complete</b>
+
+<b>Results:</b>
+📥 Total admins from API: {len(admins)}
+🆕 New topics created: {created_topics}
+🔄 Admins updated: {updated_admins}
+⚠️ Errors: {errors}
+
+<i>All admins with telegram_id are now registered.</i>"""
+            
+            await callback.message.edit_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=self.get_back_keyboard()
+            )
+            
+            logger.info(f"Admin sync completed: {len(admins)} admins, {created_topics} topics created")
+            
+        except Exception as e:
+            logger.error(f"Admin sync error: {str(e)}")
+            await callback.message.edit_text(
+                f"❌ <b>Sync Error</b>\n\n{str(e)}",
+                parse_mode="HTML",
+                reply_markup=self.get_back_keyboard()
+            )
+
     async def show_help(self, callback: CallbackQuery):
         """Show help information"""
         help_text = """📖 <b>How It Works</b>
 
-<b>1️⃣ Webhook Integration</b>
+<b>1️⃣ Admin Sync (API)</b>
+• Press "🔄 Sync Admins" to fetch all admins from panel
+• Bot automatically creates a topic for each admin
+• Requires PANEL_API_URL, PANEL_USERNAME, PANEL_PASSWORD in .env
+
+<b>2️⃣ Webhook Integration</b>
 The bot receives webhook events from your panel when users are created or updated.
 
-<b>2️⃣ Automatic Admin Detection</b>
-When an admin creates/updates a user, the bot automatically:
-• Registers the admin
-• Creates a dedicated topic (if in a forum group)
-• Sends notifications to the right place
+<b>3️⃣ Automatic Topic Routing</b>
+Each admin gets their own forum topic. Notifications for their users go to their topic.
 
-<b>3️⃣ Payment Tracking</b>
-Each notification includes buttons to mark:
+<b>4️⃣ Payment Tracking</b>
+Each notification includes buttons:
 • ✅ Paid - User has paid
 • ❌ Unpaid - User hasn't paid
 • ➕ Add to Settlement List
 
-<b>4️⃣ Message Conditions</b>
-• <code>user_created</code>: Always sends notification
+<b>5️⃣ Message Conditions</b>
+• <code>user_created</code>: Always sends
 • <code>user_updated</code>: Only when:
   - Expiry extended by ≥7 days
   - Status changed to on_hold
 
-<b>5️⃣ Setup Requirements</b>
-• Add bot to your group (as admin)
-• Enable forum topics (optional)
-• Configure webhook URL in panel
-• Enable sync in this bot"""
+<b>6️⃣ Setup Steps</b>
+1. Add bot to forum group (as admin)
+2. Set FALLBACK_CHAT_ID to group ID
+3. Configure panel API credentials
+4. Press "Sync Admins" to create topics
+5. Enable sync with "Toggle Sync"
+6. Configure webhook URL in panel"""
         
         await callback.message.edit_text(
             help_text,
@@ -336,21 +481,22 @@ Each notification includes buttons to mark:
         """Show about information"""
         about_text = """ℹ️ <b>About Accounting Bot</b>
 
-<b>Version:</b> 2.0.0
-<b>Type:</b> Webhook-based Accounting
+<b>Version:</b> 2.1.0
+<b>Type:</b> Webhook + API Accounting
 
 <b>Key Features:</b>
-• 🔄 Real-time webhook processing
-• 👥 Automatic admin topic creation
+• 🔄 Panel API integration
+• 👥 Auto admin topic creation
 • 💰 Payment status tracking
 • 📋 Settlement list management
 • 📊 Statistics and reporting
+• 🔘 Button-based interface
 
 <b>Architecture:</b>
 • FastAPI webhook receiver
 • Aiogram Telegram bot
+• Panel API client
 • SQLite database
-• Async processing
 
 <i>Built for seamless panel integration.</i>"""
         

@@ -7,6 +7,7 @@ import uvicorn
 from dotenv import load_dotenv
 
 from webhook_receiver import app, db, telegram_bot
+from api_client import PanelAPIClient
 
 # Load environment variables
 load_dotenv()
@@ -39,6 +40,21 @@ async def lifespan(app):
     # Set fallback chat/topic
     telegram_bot.fallback_chat_id = os.getenv('FALLBACK_CHAT_ID')
     telegram_bot.fallback_topic_id = os.getenv('FALLBACK_TOPIC_ID')
+    
+    # Initialize Panel API client if credentials provided
+    panel_url = os.getenv('PANEL_API_URL')
+    panel_username = os.getenv('PANEL_USERNAME')
+    panel_password = os.getenv('PANEL_PASSWORD')
+    
+    if panel_url and panel_username and panel_password:
+        telegram_bot.api_client = PanelAPIClient(
+            base_url=panel_url,
+            username=panel_username,
+            password=panel_password
+        )
+        logger.info(f"📡 Panel API client configured for: {panel_url}")
+    else:
+        logger.warning("⚠️ Panel API credentials not configured - admin sync disabled")
     
     # Start telegram bot polling in background
     polling_task = asyncio.create_task(start_telegram_polling())
