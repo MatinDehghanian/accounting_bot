@@ -579,7 +579,11 @@ Each notification includes buttons:
                 new_status = "false" if current == "true" else "true"
                 await self.db.set_sync_status("initial_sync_complete", new_status)
                 await callback.answer(f"Sync {'enabled' if new_status == 'true' else 'disabled'} ✅")
-                await self.show_settings(callback)
+                # Refresh settings view - use try/except to handle "message not modified"
+                try:
+                    await self.show_settings(callback)
+                except Exception:
+                    pass  # Ignore if message content is the same
                 
             elif action == "set_clear_admins":
                 # Show confirmation
