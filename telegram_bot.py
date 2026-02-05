@@ -844,7 +844,8 @@ async def auto_register_admin(admin_telegram_id: str, admin_username: str,
 
 async def send_to_admin_topic(admin_telegram_id: str, admin_username: str, message: str, 
                              username: str, event_key: str, db: Database, 
-                             fallback_chat_id: str = None, fallback_topic_id: str = None):
+                             fallback_chat_id: str = None, fallback_topic_id: str = None,
+                             include_buttons: bool = True):
     """Send message to admin's dedicated topic with auto-registration"""
     
     from webhook_receiver import telegram_bot
@@ -872,16 +873,18 @@ async def send_to_admin_topic(admin_telegram_id: str, admin_username: str, messa
             logger.error(f"No chat_id available for admin {admin_telegram_id}. Set FALLBACK_CHAT_ID in .env")
             return
         
-        # Create keyboard
-        keyboard = create_accounting_keyboard(username, admin_telegram_id, event_key)
+        # Create keyboard (only if include_buttons is True)
+        keyboard = create_accounting_keyboard(username, admin_telegram_id, event_key) if include_buttons else None
         
         # Send message
         kwargs = {
             'chat_id': int(chat_id),
             'text': truncate_text(message),
-            'parse_mode': 'HTML',
-            'reply_markup': keyboard
+            'parse_mode': 'HTML'
         }
+        
+        if keyboard:
+            kwargs['reply_markup'] = keyboard
         
         if topic_id:
             kwargs['message_thread_id'] = int(topic_id)

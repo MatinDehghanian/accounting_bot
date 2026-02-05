@@ -90,24 +90,51 @@ async def process_webhook_event(event: Dict):
     # Extract basic event data
     action = event.get('action')
     username = event.get('username')
-    user_data = event.get('user', {})
-    by_data = event.get('by', {})
+    user_data = event.get('user') or {}  # Handle None
+    by_data = event.get('by') or {}  # Handle None - some events don't have 'by'
     send_at = event.get('send_at', 0)
     
-    # Validate required fields
-    if not action or not username or not user_data:
-        logger.warning(f"Invalid event data: missing required fields")
+    # Supported actions we care about
+    SUPPORTED_ACTIONS = [
+        'user_created',      # Always notify - new user
+        'user_updated',      # Notify if expire extended ≥7 days or status->on_hold
+        'user_deleted',      # Notify - user removed
+    ]
+    
+    # Actions we might want to track but not notify
+    TRACKED_ACTIONS = [
+        'user_limited',
+        'user_expired', 
+        'user_enabled',
+        'user_disabled',
+        'data_usage_reset',
+    ]
+    
+    # Ignore unsupported actions silently
+    if action not in SUPPORTED_ACTIONS + TRACKED_ACTIONS:
+        logger.debug(f"Ignoring unsupported action: {action}")
+        return
+    
+    # Validate required fields for supported actions
+    if not action or not username:
+        logger.warning(f"Invalid event data: missing action or username")
+        return
+    
+    # For actions that require user data
+    if action in SUPPORTED_ACTIONS and action != 'user_deleted' and not user_data:
+        logger.warning(f"Missing user data for {action}")
         return
     
     # Log the event
+    admin_tg_id = by_data.get('telegram_id') if by_data else None
     await db.log_audit(
         log_type="webhook_received",
         username=username,
-        admin_telegram_id=by_data.get('telegram_id'),
+        admin_telegram_id=admin_tg_id,
         payload=event
     )
     
-    # Check if sync is complete
+    # Check if sync is complete (only affects user_updated)
     sync_status = await db.get_sync_status("initial_sync_complete")
     if sync_status != "true" and action == "user_updated":
         logger.info(f"Skipping user_updated for {username} - initial sync not complete")
@@ -118,16 +145,25 @@ async def process_webhook_event(event: Dict):
         await handle_user_created(event)
     elif action == "user_updated":
         await handle_user_updated(event)
-    else:
-        logger.info(f"Ignoring unsupported action: {action}")
+    elif action == "user_deleted":
+        await handle_user_deleted(event)
+    elif action in TRACKED_ACTIONS:
+        # Just save snapshot, don't notify
+        if user_data:
+            await db.save_user_snapshot(
+                username=username,
+                status=user_data.get('status'),
+                expire=user_data.get('expire')
+            )
+        logger.info(f"Tracked {action} for {username} (no notification)")
 
 
 async def handle_user_created(event: Dict):
     """Handle user_created event - always send message"""
     
     username = event.get('username')
-    user_data = event.get('user', {})
-    by_data = event.get('by', {})
+    user_data = event.get('user') or {}
+    by_data = event.get('by') or {}
     send_at = event.get('send_at', 0)
     
     # Save user snapshot
@@ -144,7 +180,7 @@ async def handle_user_created(event: Dict):
     event_key = generate_event_key("created", username, send_at)
     
     # Send to admin topic
-    admin_telegram_id = by_data.get('telegram_id')
+    admin_telegram_id = by_data.get('telegram_id') if by_data else None
     if admin_telegram_id:
         await send_to_admin_topic(
             admin_telegram_id=str(admin_telegram_id),
@@ -154,16 +190,52 @@ async def handle_user_created(event: Dict):
             event_key=event_key,
             db=db
         )
+        logger.info(f"Processed user_created for {username} by admin {admin_telegram_id}")
+    else:
+        logger.warning(f"user_created for {username} has no admin telegram_id - cannot route")
+
+
+async def handle_user_deleted(event: Dict):
+    """Handle user_deleted event - notify admin that user was deleted"""
     
-    logger.info(f"Processed user_created for {username} by admin {admin_telegram_id}")
+    username = event.get('username')
+    by_data = event.get('by') or {}
+    send_at = event.get('send_at', 0)
+    
+    # Create message
+    admin_username = by_data.get('username', 'Unknown') if by_data else 'Unknown'
+    message = f"""🗑 <b>User Deleted</b>
+
+👤 <b>User:</b> <code>{username}</code>
+👮 <b>Deleted by:</b> {admin_username}
+🕐 <b>Time:</b> {format_persian_datetime(datetime.now(timezone.utc).isoformat())}"""
+    
+    # Generate unique event key
+    event_key = generate_event_key("deleted", username, send_at)
+    
+    # Send to admin topic
+    admin_telegram_id = by_data.get('telegram_id') if by_data else None
+    if admin_telegram_id:
+        await send_to_admin_topic(
+            admin_telegram_id=str(admin_telegram_id),
+            admin_username=admin_username,
+            message=message,
+            username=username,
+            event_key=event_key,
+            db=db,
+            include_buttons=False  # No payment buttons for deleted users
+        )
+        logger.info(f"Processed user_deleted for {username} by admin {admin_telegram_id}")
+    else:
+        logger.warning(f"user_deleted for {username} has no admin telegram_id - cannot route")
 
 
 async def handle_user_updated(event: Dict):
     """Handle user_updated event - send only in specific conditions"""
     
     username = event.get('username')
-    user_data = event.get('user', {})
-    by_data = event.get('by', {})
+    user_data = event.get('user') or {}
+    by_data = event.get('by') or {}
     send_at = event.get('send_at', 0)
     
     # Get old snapshot
