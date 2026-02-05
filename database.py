@@ -10,17 +10,35 @@ logger = logging.getLogger(__name__)
 
 # Get database path from environment variable
 DEFAULT_DB_PATH = os.getenv('DB_PATH', 'accounting_bot.db')
+logger.info(f"DB_PATH from environment: {os.getenv('DB_PATH')}")
+logger.info(f"Using DEFAULT_DB_PATH: {DEFAULT_DB_PATH}")
 
 class Database:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or DEFAULT_DB_PATH
-        logger.info(f"Database path: {self.db_path}")
+        logger.info(f"Database initialized with path: {self.db_path}")
         
         # Ensure parent directory exists
         db_dir = Path(self.db_path).parent
-        if not db_dir.exists():
+        logger.info(f"Database directory: {db_dir}, exists: {db_dir.exists()}")
+        
+        if str(db_dir) != '.' and not db_dir.exists():
             logger.info(f"Creating database directory: {db_dir}")
-            db_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                db_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Directory created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create directory: {e}")
+        
+        # Check if we can write to the directory
+        try:
+            test_file = Path(self.db_path).parent / '.write_test'
+            if str(db_dir) != '.':
+                test_file.touch()
+                test_file.unlink()
+                logger.info(f"Write test passed for directory: {db_dir}")
+        except Exception as e:
+            logger.error(f"Cannot write to database directory: {e}")
 
     async def init_db(self):
         """Initialize database tables"""

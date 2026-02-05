@@ -17,17 +17,11 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create non-root user first
-RUN adduser --disabled-password --gecos '' appuser
-
 # Copy project
 COPY . .
 
-# Create data directory for persistent storage and set permissions
-RUN mkdir -p /app/data && \
-    chown -R appuser:appuser /app
-
-USER appuser
+# Create data directory for persistent storage
+RUN mkdir -p /app/data
 
 # Expose port
 EXPOSE 8080
