@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   accounting-bot:
     build: .
