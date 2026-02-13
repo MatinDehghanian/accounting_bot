@@ -82,6 +82,10 @@ class TelegramBot:
                 InlineKeyboardButton(text="⚡ Toggle Sync", callback_data=f"{MENU_PREFIX}sync")
             ],
             [
+                InlineKeyboardButton(text="🧾 Admin Sales", callback_data=f"{MENU_PREFIX}admin_sales"),
+                InlineKeyboardButton(text="⏰ Expiry Groups", callback_data=f"{MENU_PREFIX}expiry_groups")
+            ],
+            [
                 InlineKeyboardButton(text="⚙️ Settings", callback_data=f"{MENU_PREFIX}settings"),
                 InlineKeyboardButton(text="📖 Help", callback_data=f"{MENU_PREFIX}help")
             ],
@@ -153,6 +157,12 @@ Select an option below:"""
                 await self.handle_checkout(callback)
             elif action == "confirm_checkout":
                 await self.confirm_checkout(callback)
+            elif action == "admin_sales":
+                await self.show_admin_sales(callback)
+            elif action == "expiry_groups":
+                await self.show_expiry_groups(callback)
+            elif action.startswith("expiry_"):
+                await self.handle_expiry_action(callback, action)
             elif action == "help":
                 await self.show_help(callback)
             elif action == "about":
@@ -467,6 +477,457 @@ Then restart the bot."""
                 parse_mode="HTML",
                 reply_markup=self.get_back_keyboard()
             )
+
+    async def show_admin_sales(self, callback: CallbackQuery):
+        """Show admin sales report - unsettled users per admin"""
+        try:
+            if not self.api_client:
+                await callback.message.edit_text(
+                    "⚠️ <b>API Not Configured</b>\n\nPanel API is required for admin sales report.",
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
+                await callback.answer()
+                return
+
+            await callback.message.edit_text(
+                "🔄 <b>Loading Admin Sales Report...</b>\n\nFetching users from panel...",
+                parse_mode="HTML"
+            )
+            await callback.answer()
+
+            # Fetch all users from panel API
+            all_users = await self.api_client.get_all_users()
+            if not all_users:
+                await callback.message.edit_text(
+                    "📝 <b>No users found in panel.</b>",
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
+                return
+
+            # Group users by admin, check payment status
+            admin_data = {}  # admin_username -> {create_gb, create_count, renew_gb, renew_count, users}
+
+            for user in all_users:
+                admin_info = user.get('admin')
+                admin_username = admin_info.get('username', 'Unknown') if admin_info else 'Unknown'
+                username = user.get('username', '')
+                data_limit = user.get('data_limit', 0) or 0
+                data_limit_gb = data_limit / (1024 ** 3)  # bytes to GB
+
+                # Check payment status from our DB
+                payment = await self.db.get_payment_status(username)
+                payment_status = payment.get('payment_status') if payment else None
+
+                # Skip users that are already paid or dismissed
+                if payment_status in ('Paid', 'Dismissed'):
+                    continue
+
+                if admin_username not in admin_data:
+                    admin_data[admin_username] = {
+                        'create_gb': 0, 'create_count': 0,
+                        'renew_gb': 0, 'renew_count': 0,
+                        'total_gb': 0, 'total_count': 0
+                    }
+
+                # Determine if this user was a create or renew
+                # Check audit_log for the latest relevant event for this user
+                is_renew = await self._is_user_renewed(username)
+
+                if is_renew:
+                    admin_data[admin_username]['renew_gb'] += data_limit_gb
+                    admin_data[admin_username]['renew_count'] += 1
+                else:
+                    admin_data[admin_username]['create_gb'] += data_limit_gb
+                    admin_data[admin_username]['create_count'] += 1
+
+                admin_data[admin_username]['total_gb'] += data_limit_gb
+                admin_data[admin_username]['total_count'] += 1
+
+            if not admin_data:
+                await callback.message.edit_text(
+                    "✅ <b>All Clear!</b>\n\nAll users have been settled (Paid/Dismissed).",
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
+                return
+
+            # Build report
+            text = "🧾 <b>Admin Sales Report</b>\n"
+            text += "<i>Unsettled users only (not Paid/Dismissed)</i>\n\n"
+
+            for admin_name in sorted(admin_data.keys()):
+                data = admin_data[admin_name]
+                text += f"👮 <b>{admin_name}</b>\n"
+                text += f"   📊 Total: <b>{data['total_gb']:.1f} GB</b> ({data['total_count']} users)\n"
+                text += f"   🆕 Create: {data['create_gb']:.1f} GB ({data['create_count']} users)\n"
+                text += f"   🔄 Renew: {data['renew_gb']:.1f} GB ({data['renew_count']} users)\n\n"
+
+            # Grand totals
+            grand_total_gb = sum(d['total_gb'] for d in admin_data.values())
+            grand_total_users = sum(d['total_count'] for d in admin_data.values())
+            text += f"━━━━━━━━━━━━━━━━━━\n"
+            text += f"📦 <b>Grand Total: {grand_total_gb:.1f} GB ({grand_total_users} users)</b>"
+
+            # Truncate if too long
+            from utils import truncate_text
+            text = truncate_text(text)
+
+            await callback.message.edit_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=self.get_back_keyboard()
+            )
+
+        except Exception as e:
+            logger.error(f"Admin sales report error: {str(e)}")
+            await callback.message.edit_text(
+                f"❌ <b>Error:</b> {str(e)}",
+                parse_mode="HTML",
+                reply_markup=self.get_back_keyboard()
+            )
+
+    async def _is_user_renewed(self, username: str) -> bool:
+        """Check if a user has been renewed (has user_updated events with expire extension)"""
+        try:
+            import aiosqlite
+            import json
+            async with aiosqlite.connect(self.db.db_path) as db_conn:
+                cursor = await db_conn.execute("""
+                    SELECT payload_json FROM audit_log 
+                    WHERE username = ? AND type = 'webhook_received'
+                    ORDER BY created_at DESC
+                """, (username,))
+                rows = await cursor.fetchall()
+
+                for row in rows:
+                    try:
+                        payload = json.loads(row[0]) if row[0] else {}
+                        action = payload.get('action', '')
+                        if action == 'user_updated':
+                            return True
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+            return False
+        except Exception:
+            return False
+
+    async def show_expiry_groups(self, callback: CallbackQuery):
+        """Show expiry group settings and status"""
+        try:
+            # Get current settings
+            threshold_days = await self.db.get_sync_status("expiry_threshold_days")
+            group_id = await self.db.get_sync_status("expiry_group_id")
+            remove_enabled = await self.db.get_sync_status("expiry_remove_enabled")
+            last_check = await self.db.get_sync_status("expiry_last_check")
+            auto_enabled = await self.db.get_sync_status("expiry_auto_enabled")
+
+            threshold_text = f"{threshold_days} days" if threshold_days else "Not set"
+            group_text = f"Group #{group_id}" if group_id else "Not set"
+            remove_text = "✅ Yes" if remove_enabled == "true" else "❌ No"
+            auto_text = "✅ Enabled" if auto_enabled == "true" else "❌ Disabled"
+            last_check_text = format_persian_datetime(last_check) if last_check else "Never"
+
+            text = f"""⏰ <b>Auto-Expiry Group Assignment</b>
+
+<b>Current Settings:</b>
+📅 Threshold: <b>{threshold_text}</b>
+🏷 Group ID: <b>{group_text}</b>
+🗑 Remove if > threshold: {remove_text}
+🤖 Auto-check (24h): {auto_text}
+🕐 Last check: {last_check_text}
+
+<i>Users expiring within the threshold will be added to the specified group.
+Users with more time remaining will be removed from that group (if enabled).</i>
+
+<b>Configure:</b>"""
+
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"📅 Set Threshold ({threshold_text})",
+                        callback_data=f"{MENU_PREFIX}expiry_set_threshold"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=f"🏷 Set Group ({group_text})",
+                        callback_data=f"{MENU_PREFIX}expiry_set_group"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=f"🗑 Toggle Remove: {remove_text}",
+                        callback_data=f"{MENU_PREFIX}expiry_toggle_remove"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=f"🤖 Toggle Auto: {auto_text}",
+                        callback_data=f"{MENU_PREFIX}expiry_toggle_auto"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="▶️ Run Now",
+                        callback_data=f"{MENU_PREFIX}expiry_run_now"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(text="🔙 Back to Menu", callback_data=f"{MENU_PREFIX}main")
+                ]
+            ])
+
+            await callback.message.edit_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            await callback.answer()
+
+        except Exception as e:
+            logger.error(f"Expiry groups error: {str(e)}")
+            await callback.answer(f"❌ Error: {str(e)}", show_alert=True)
+
+    async def handle_expiry_action(self, callback: CallbackQuery, action: str):
+        """Handle expiry group sub-actions"""
+        try:
+            if action == "expiry_set_threshold":
+                # Show threshold options
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="3 days", callback_data=f"{MENU_PREFIX}expiry_threshold_3"),
+                        InlineKeyboardButton(text="5 days", callback_data=f"{MENU_PREFIX}expiry_threshold_5"),
+                        InlineKeyboardButton(text="7 days", callback_data=f"{MENU_PREFIX}expiry_threshold_7"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="10 days", callback_data=f"{MENU_PREFIX}expiry_threshold_10"),
+                        InlineKeyboardButton(text="14 days", callback_data=f"{MENU_PREFIX}expiry_threshold_14"),
+                        InlineKeyboardButton(text="30 days", callback_data=f"{MENU_PREFIX}expiry_threshold_30"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="🔙 Back", callback_data=f"{MENU_PREFIX}expiry_groups")
+                    ]
+                ])
+                await callback.message.edit_text(
+                    "📅 <b>Set Expiry Threshold</b>\n\nUsers expiring within this many days will be added to the group:",
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+                await callback.answer()
+
+            elif action.startswith("expiry_threshold_"):
+                days = action.replace("expiry_threshold_", "")
+                await self.db.set_sync_status("expiry_threshold_days", days)
+                await callback.answer(f"Threshold set to {days} days ✅", show_alert=True)
+                await self.show_expiry_groups(callback)
+
+            elif action == "expiry_set_group":
+                # Fetch groups from API and show selection
+                if not self.api_client:
+                    await callback.answer("API not configured", show_alert=True)
+                    return
+
+                groups = await self.api_client.get_all_groups()
+                if not groups:
+                    await callback.answer("No groups found in panel", show_alert=True)
+                    return
+
+                buttons = []
+                row = []
+                for group in groups:
+                    group_name = group.get('name', 'Unknown')
+                    group_id = group.get('id', 0)
+                    row.append(InlineKeyboardButton(
+                        text=f"#{group_id} {group_name}",
+                        callback_data=f"{MENU_PREFIX}expiry_group_{group_id}"
+                    ))
+                    if len(row) == 2:
+                        buttons.append(row)
+                        row = []
+                if row:
+                    buttons.append(row)
+                buttons.append([
+                    InlineKeyboardButton(text="🔙 Back", callback_data=f"{MENU_PREFIX}expiry_groups")
+                ])
+
+                keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+                await callback.message.edit_text(
+                    "🏷 <b>Select Group</b>\n\nChoose the group to assign to users near expiry:",
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+                await callback.answer()
+
+            elif action.startswith("expiry_group_"):
+                group_id = action.replace("expiry_group_", "")
+                await self.db.set_sync_status("expiry_group_id", group_id)
+                await callback.answer(f"Group set to #{group_id} ✅", show_alert=True)
+                await self.show_expiry_groups(callback)
+
+            elif action == "expiry_toggle_remove":
+                current = await self.db.get_sync_status("expiry_remove_enabled")
+                new_val = "false" if current == "true" else "true"
+                await self.db.set_sync_status("expiry_remove_enabled", new_val)
+                await callback.answer(f"Remove {'enabled' if new_val == 'true' else 'disabled'} ✅")
+                await self.show_expiry_groups(callback)
+
+            elif action == "expiry_toggle_auto":
+                current = await self.db.get_sync_status("expiry_auto_enabled")
+                new_val = "false" if current == "true" else "true"
+                await self.db.set_sync_status("expiry_auto_enabled", new_val)
+                await callback.answer(f"Auto-check {'enabled' if new_val == 'true' else 'disabled'} ✅")
+                await self.show_expiry_groups(callback)
+
+            elif action == "expiry_run_now":
+                await self.run_expiry_group_check(callback)
+
+            else:
+                await callback.answer("Unknown expiry action", show_alert=True)
+
+        except Exception as e:
+            logger.error(f"Expiry action error: {str(e)}")
+            await callback.answer(f"❌ Error: {str(e)}", show_alert=True)
+
+    async def run_expiry_group_check(self, callback: CallbackQuery = None):
+        """
+        Check all users' expiry dates and assign/remove group IDs.
+        Can be called from button (with callback) or from background scheduler (without).
+        """
+        try:
+            # Get settings
+            threshold_days = await self.db.get_sync_status("expiry_threshold_days")
+            group_id = await self.db.get_sync_status("expiry_group_id")
+            remove_enabled = await self.db.get_sync_status("expiry_remove_enabled")
+
+            if not threshold_days or not group_id:
+                if callback:
+                    await callback.answer("⚠️ Set threshold and group first!", show_alert=True)
+                return
+
+            threshold = int(threshold_days)
+            target_group = int(group_id)
+
+            if callback:
+                await callback.message.edit_text(
+                    "🔄 <b>Running Expiry Check...</b>\n\nFetching all users from panel...",
+                    parse_mode="HTML"
+                )
+                await callback.answer()
+
+            if not self.api_client:
+                if callback:
+                    await callback.message.edit_text(
+                        "⚠️ <b>API not configured</b>",
+                        parse_mode="HTML",
+                        reply_markup=self.get_back_keyboard()
+                    )
+                return
+
+            # Fetch all users
+            all_users = await self.api_client.get_all_users()
+            if not all_users:
+                if callback:
+                    await callback.message.edit_text(
+                        "📝 <b>No users found in panel.</b>",
+                        parse_mode="HTML",
+                        reply_markup=self.get_back_keyboard()
+                    )
+                return
+
+            from utils import calculate_days_left
+
+            added_count = 0
+            removed_count = 0
+            errors = 0
+            skipped = 0
+
+            for user in all_users:
+                username = user.get('username', '')
+                expire = user.get('expire')
+                current_groups = user.get('group_ids') or []
+                status = user.get('status', '')
+
+                # Skip users without expiry (unlimited)
+                if not expire:
+                    skipped += 1
+                    continue
+
+                # Skip non-active users
+                if status not in ('active', 'on_hold'):
+                    skipped += 1
+                    continue
+
+                days_left = calculate_days_left(expire)
+                if days_left is None:
+                    skipped += 1
+                    continue
+
+                has_group = target_group in current_groups
+
+                if days_left <= threshold and not has_group:
+                    # Add to group
+                    new_groups = current_groups + [target_group]
+                    result = await self.api_client.modify_user(username, {"group_ids": new_groups})
+                    if result:
+                        added_count += 1
+                        logger.info(f"Added user {username} to group {target_group} (expires in {days_left} days)")
+                    else:
+                        errors += 1
+                        logger.error(f"Failed to add user {username} to group {target_group}")
+
+                elif days_left > threshold and has_group and remove_enabled == "true":
+                    # Remove from group
+                    new_groups = [g for g in current_groups if g != target_group]
+                    result = await self.api_client.modify_user(username, {"group_ids": new_groups})
+                    if result:
+                        removed_count += 1
+                        logger.info(f"Removed user {username} from group {target_group} (expires in {days_left} days)")
+                    else:
+                        errors += 1
+                        logger.error(f"Failed to remove user {username} from group {target_group}")
+
+            # Update last check time
+            await self.db.set_sync_status("expiry_last_check", datetime.now().isoformat())
+
+            result_text = f"""✅ <b>Expiry Group Check Complete</b>
+
+<b>Settings:</b>
+📅 Threshold: {threshold} days
+🏷 Group: #{target_group}
+🗑 Auto-remove: {'Yes' if remove_enabled == "true" else 'No'}
+
+<b>Results:</b>
+📥 Total users checked: {len(all_users)}
+➕ Added to group: {added_count}
+➖ Removed from group: {removed_count}
+⏭ Skipped: {skipped}
+⚠️ Errors: {errors}
+
+🕐 <b>Time:</b> {format_persian_datetime(datetime.now().isoformat())}"""
+
+            if callback:
+                await callback.message.edit_text(
+                    result_text,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="⏰ Expiry Settings", callback_data=f"{MENU_PREFIX}expiry_groups")],
+                        [InlineKeyboardButton(text="🔙 Back to Menu", callback_data=f"{MENU_PREFIX}main")]
+                    ])
+                )
+            else:
+                # Log results when running from scheduler
+                logger.info(f"Expiry check: +{added_count} / -{removed_count} / {errors} errors / {skipped} skipped")
+
+        except Exception as e:
+            logger.error(f"Expiry group check error: {str(e)}")
+            if callback:
+                await callback.message.edit_text(
+                    f"❌ <b>Error:</b> {str(e)}",
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
 
     async def show_help(self, callback: CallbackQuery):
         """Show help information"""

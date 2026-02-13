@@ -359,3 +359,57 @@ class Database:
                 VALUES (?, 'Dismissed', ?, ?)
             """, (username, dismissed_by, datetime.now(timezone.utc).isoformat()))
             await db.commit()
+
+    async def get_unsettled_events_by_admin(self) -> List[Dict]:
+        """
+        Get all webhook events (user_created / user_updated) where the user
+        does NOT have a Paid or Dismissed payment status.
+        Groups by admin and returns per-event details.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT 
+                    al.admin_telegram_id,
+                    at.admin_username,
+                    al.username,
+                    al.payload_json,
+                    al.created_at as event_time
+                FROM audit_log al
+                LEFT JOIN payments p ON al.username = p.username
+                LEFT JOIN admin_topics at ON al.admin_telegram_id = at.admin_telegram_id
+                WHERE al.type = 'webhook_received'
+                AND al.admin_telegram_id IS NOT NULL
+                AND (p.payment_status IS NULL OR p.payment_status = 'Unknown')
+                ORDER BY al.admin_telegram_id, al.created_at DESC
+            """)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_admin_sales_summary(self) -> List[Dict]:
+        """
+        Build an admin sales summary from audit_log.
+        Returns one row per admin with aggregated totals for unsettled users.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Get distinct usernames per admin that are unsettled
+            cursor = await db.execute("""
+                SELECT 
+                    al.admin_telegram_id,
+                    at.admin_username,
+                    al.username,
+                    al.payload_json,
+                    json_extract(al.payload_json, '$.action') as action,
+                    json_extract(al.payload_json, '$.user.data_limit') as data_limit
+                FROM audit_log al
+                LEFT JOIN payments p ON al.username = p.username
+                LEFT JOIN admin_topics at ON al.admin_telegram_id = at.admin_telegram_id
+                WHERE al.type = 'webhook_received'
+                AND al.admin_telegram_id IS NOT NULL
+                AND json_extract(al.payload_json, '$.action') IN ('user_created', 'user_updated')
+                AND (p.payment_status IS NULL OR p.payment_status = 'Unknown')
+                ORDER BY al.admin_telegram_id, al.created_at ASC
+            """)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]

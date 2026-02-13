@@ -201,6 +201,66 @@ class PanelAPIClient:
         """Get details of currently authenticated admin"""
         return await self._request("GET", "/api/admin")
     
+    async def get_user(self, username: str) -> Optional[Dict]:
+        """
+        Fetch a single user by username.
+        
+        Returns:
+            User dictionary or None on error
+        """
+        return await self._request("GET", f"/api/user/{username}")
+
+    async def modify_user(self, username: str, data: Dict) -> Optional[Dict]:
+        """
+        Modify a user.
+        
+        Args:
+            username: Username to modify
+            data: UserModify body (e.g. group_ids, status, expire, etc.)
+            
+        Returns:
+            Updated user dictionary or None on error
+        """
+        return await self._request("PUT", f"/api/user/{username}", json=data)
+
+    async def get_groups(self, offset: int = 0, limit: int = 100) -> Optional[Dict]:
+        """
+        Fetch list of groups from the panel.
+        
+        Returns:
+            Dict with 'groups' list, or None on error
+        """
+        params = {"offset": offset, "limit": limit}
+        return await self._request("GET", "/api/groups", params=params)
+
+    async def get_all_groups(self) -> List[Dict]:
+        """
+        Fetch all groups (handles pagination).
+        
+        Returns:
+            List of all group dictionaries
+        """
+        all_groups = []
+        offset = 0
+        limit = 100
+        
+        while True:
+            result = await self.get_groups(offset=offset, limit=limit)
+            if not result or "groups" not in result:
+                break
+            
+            groups = result["groups"]
+            all_groups.extend(groups)
+            
+            total = result.get("total", 0)
+            if offset + limit >= total or len(groups) < limit:
+                break
+            
+            offset += limit
+        
+        logger.info(f"Fetched {len(all_groups)} groups from panel")
+        return all_groups
+
     async def test_connection(self) -> bool:
         """Test if we can connect and authenticate with the API"""
         try:

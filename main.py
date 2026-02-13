@@ -63,6 +63,9 @@ async def lifespan(app):
     # Start telegram bot polling in background
     polling_task = asyncio.create_task(start_telegram_polling())
     
+    # Start expiry group checker in background
+    expiry_task = asyncio.create_task(expiry_group_scheduler())
+    
     logger.info("✅ Accounting Bot started successfully")
     
     yield
@@ -70,9 +73,15 @@ async def lifespan(app):
     # Shutdown
     logger.info("Shutting down Accounting Bot...")
     polling_task.cancel()
+    expiry_task.cancel()
     
     try:
         await polling_task
+    except asyncio.CancelledError:
+        pass
+    
+    try:
+        await expiry_task
     except asyncio.CancelledError:
         pass
     
@@ -160,6 +169,39 @@ async def send_backup_message(message: str, file_path: str = None):
     except Exception as e:
         logger.error(f"Error sending backup message: {e}")
         return False
+
+
+async def expiry_group_scheduler():
+    """Background task that runs expiry group check every 24 hours"""
+    INTERVAL = 24 * 60 * 60  # 24 hours in seconds
+    
+    # Wait 60 seconds on startup before first check
+    await asyncio.sleep(60)
+    
+    while True:
+        try:
+            # Check if auto-check is enabled
+            auto_enabled = await db.get_sync_status("expiry_auto_enabled")
+            
+            if auto_enabled == "true":
+                logger.info("⏰ Running scheduled expiry group check...")
+                await telegram_bot.run_expiry_group_check(callback=None)
+                logger.info("✅ Scheduled expiry group check complete")
+            else:
+                logger.debug("Expiry auto-check is disabled, skipping")
+                
+        except asyncio.CancelledError:
+            logger.info("Expiry group scheduler cancelled")
+            return
+        except Exception as e:
+            logger.error(f"Error in expiry group scheduler: {str(e)}")
+        
+        # Wait 24 hours before next check
+        try:
+            await asyncio.sleep(INTERVAL)
+        except asyncio.CancelledError:
+            logger.info("Expiry group scheduler cancelled during sleep")
+            return
 
 
 async def start_telegram_polling():
