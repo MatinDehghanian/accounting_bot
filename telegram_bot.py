@@ -491,59 +491,68 @@ Then restart the bot."""
                 return
 
             await callback.message.edit_text(
-                "🔄 <b>Loading Admin Sales Report...</b>\n\nFetching users from panel...",
+                "🔄 <b>Loading Admin Sales Report...</b>\n\nFetching data...",
                 parse_mode="HTML"
             )
             await callback.answer()
 
-            # Fetch all users from panel API
-            all_users = await self.api_client.get_all_users()
-            if not all_users:
+            # Get registered admins from our DB
+            admin_topics = await self.db.get_all_admin_topics()
+            if not admin_topics:
                 await callback.message.edit_text(
-                    "📝 <b>No users found in panel.</b>",
+                    "📝 <b>No admins registered.</b>\n\nSync admins first.",
                     parse_mode="HTML",
                     reply_markup=self.get_back_keyboard()
                 )
                 return
 
-            # Group users by admin, check payment status
-            admin_data = {}  # admin_username -> {create_gb, create_count, renew_gb, renew_count, users}
+            # Get local renew data: usernames that have user_updated (expire extended) in audit_log
+            renewed_users = await self.db.get_renewed_usernames()
 
-            for user in all_users:
-                admin_info = user.get('admin')
-                admin_username = admin_info.get('username', 'Unknown') if admin_info else 'Unknown'
-                username = user.get('username', '')
-                data_limit = user.get('data_limit', 0) or 0
-                data_limit_gb = data_limit / (1024 ** 3)  # bytes to GB
+            admin_data = {}
 
-                # Check payment status from our DB
-                payment = await self.db.get_payment_status(username)
-                payment_status = payment.get('payment_status') if payment else None
-
-                # Skip users that are already paid or dismissed
-                if payment_status in ('Paid', 'Dismissed'):
+            for admin in admin_topics:
+                admin_username = admin.get('admin_username', 'Unknown')
+                if not admin_username or admin_username == 'Unknown':
                     continue
 
-                if admin_username not in admin_data:
-                    admin_data[admin_username] = {
-                        'create_gb': 0, 'create_count': 0,
-                        'renew_gb': 0, 'renew_count': 0,
-                        'total_gb': 0, 'total_count': 0
-                    }
+                # Fetch only this admin's users from the API
+                users = await self.api_client.get_all_users(admin=admin_username)
+                if not users:
+                    continue
 
-                # Determine if this user was a create or renew
-                # Check audit_log for the latest relevant event for this user
-                is_renew = await self._is_user_renewed(username)
+                for user in users:
+                    username = user.get('username', '')
+                    data_limit = user.get('data_limit', 0) or 0
+                    data_limit_gb = data_limit / (1024 ** 3)
 
-                if is_renew:
-                    admin_data[admin_username]['renew_gb'] += data_limit_gb
-                    admin_data[admin_username]['renew_count'] += 1
-                else:
-                    admin_data[admin_username]['create_gb'] += data_limit_gb
-                    admin_data[admin_username]['create_count'] += 1
+                    # Check payment status from our DB
+                    payment = await self.db.get_payment_status(username)
+                    payment_status = payment.get('payment_status') if payment else None
 
-                admin_data[admin_username]['total_gb'] += data_limit_gb
-                admin_data[admin_username]['total_count'] += 1
+                    # Skip users that are already paid or dismissed
+                    if payment_status in ('Paid', 'Dismissed'):
+                        continue
+
+                    if admin_username not in admin_data:
+                        admin_data[admin_username] = {
+                            'create_gb': 0, 'create_count': 0,
+                            'renew_gb': 0, 'renew_count': 0,
+                            'total_gb': 0, 'total_count': 0
+                        }
+
+                    # Check our DB to see if this user was renewed
+                    is_renew = username in renewed_users
+
+                    if is_renew:
+                        admin_data[admin_username]['renew_gb'] += data_limit_gb
+                        admin_data[admin_username]['renew_count'] += 1
+                    else:
+                        admin_data[admin_username]['create_gb'] += data_limit_gb
+                        admin_data[admin_username]['create_count'] += 1
+
+                    admin_data[admin_username]['total_gb'] += data_limit_gb
+                    admin_data[admin_username]['total_count'] += 1
 
             if not admin_data:
                 await callback.message.edit_text(
@@ -587,31 +596,6 @@ Then restart the bot."""
                 parse_mode="HTML",
                 reply_markup=self.get_back_keyboard()
             )
-
-    async def _is_user_renewed(self, username: str) -> bool:
-        """Check if a user has been renewed (has user_updated events with expire extension)"""
-        try:
-            import aiosqlite
-            import json
-            async with aiosqlite.connect(self.db.db_path) as db_conn:
-                cursor = await db_conn.execute("""
-                    SELECT payload_json FROM audit_log 
-                    WHERE username = ? AND type = 'webhook_received'
-                    ORDER BY created_at DESC
-                """, (username,))
-                rows = await cursor.fetchall()
-
-                for row in rows:
-                    try:
-                        payload = json.loads(row[0]) if row[0] else {}
-                        action = payload.get('action', '')
-                        if action == 'user_updated':
-                            return True
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-            return False
-        except Exception:
-            return False
 
     async def show_expiry_groups(self, callback: CallbackQuery):
         """Show expiry group settings and status"""

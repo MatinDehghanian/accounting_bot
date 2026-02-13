@@ -413,3 +413,18 @@ class Database:
             """)
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    async def get_renewed_usernames(self) -> set:
+        """
+        Get a set of usernames that have been renewed (user_updated with expire extension).
+        Uses audit_log webhook events stored locally — panel has no renew concept.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("""
+                SELECT DISTINCT al.username
+                FROM audit_log al
+                WHERE al.type = 'webhook_received'
+                AND json_extract(al.payload_json, '$.action') = 'user_updated'
+            """)
+            rows = await cursor.fetchall()
+            return {row[0] for row in rows if row[0]}
