@@ -51,6 +51,7 @@ class TelegramBot:
         
         # Register handlers - only /start command, rest is buttons
         self.dp.message(Command("start"))(self.cmd_start)
+        self.dp.message(Command("setadmin"))(self.cmd_setadmin)
         
         # Handle any text message to show main menu
         self.dp.message(F.text)(self.handle_text_message)
@@ -106,6 +107,49 @@ class TelegramBot:
         """Handle /start command - show main menu"""
         await self.show_main_menu(message)
 
+    async def cmd_setadmin(self, message: Message):
+        """Handle /setadmin command - set main bot admin ID"""
+        try:
+            # Extract telegram_id from command
+            # Format: /setadmin 123456789
+            parts = message.text.split()
+            
+            if len(parts) != 2:
+                await message.reply(
+                    "❌ <b>Usage:</b> <code>/setadmin YOUR_TELEGRAM_ID</code>\n\n"
+                    f"Your ID: <code>{message.from_user.id}</code>\n\n"
+                    "To use your own ID, send: <code>/setadmin " + str(message.from_user.id) + "</code>",
+                    parse_mode="HTML"
+                )
+                return
+            
+            admin_id = parts[1]
+            
+            # Validate it's numeric
+            if not admin_id.isdigit():
+                await message.reply(
+                    "❌ <b>Error:</b> Telegram ID must be numeric.\n\n"
+                    f"Your ID: <code>{message.from_user.id}</code>",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Save to database
+            await self.db.set_sync_status("main_bot_admin_id", admin_id)
+            
+            await message.reply(
+                f"✅ <b>Main Bot Admin Set</b>\n\n"
+                f"ID: <code>{admin_id}</code>\n\n"
+                "This admin will manage topics for panel admins without telegram_id.",
+                parse_mode="HTML"
+            )
+            
+            logger.info(f"Main bot admin set to {admin_id} by {message.from_user.id}")
+            
+        except Exception as e:
+            logger.error(f"Error setting main admin: {str(e)}")
+            await message.reply(f"❌ Error: {str(e)}")
+
     async def handle_text_message(self, message: Message):
         """Handle any text message - show main menu"""
         await self.show_main_menu(message)
@@ -159,6 +203,9 @@ Select an option below:"""
                 await self.confirm_checkout(callback)
             elif action == "admin_sales":
                 await self.show_admin_sales(callback)
+            elif action.startswith("sales_"):
+                admin_name = action.replace("sales_", "")
+                await self.show_admin_sales_report(callback, admin_name)
             elif action == "expiry_groups":
                 await self.show_expiry_groups(callback)
             elif action.startswith("expiry_"):
@@ -387,13 +434,25 @@ Then restart the bot."""
             created_topics = 0
             updated_admins = 0
             errors = 0
+            no_telegram_id_count = 0
+            
+            # Get main bot admin from settings (for admins without telegram_id)
+            main_bot_admin = await self.db.get_sync_status("main_bot_admin_id")
             
             for admin in admins:
                 admin_username = admin.get('username', 'unknown')
                 admin_telegram_id = admin.get('telegram_id')
                 
+                # If admin has no telegram_id, use main bot admin or skip
                 if not admin_telegram_id:
-                    continue  # Skip admins without telegram_id
+                    if main_bot_admin:
+                        # Use main bot admin's ID as placeholder
+                        admin_telegram_id = main_bot_admin
+                        no_telegram_id_count += 1
+                        logger.info(f"Admin {admin_username} has no telegram_id, assigning to main bot admin {main_bot_admin}")
+                    else:
+                        logger.warning(f"Admin {admin_username} has no telegram_id and no main bot admin set - skipping")
+                        continue
                 
                 admin_telegram_id = str(admin_telegram_id)
                 
@@ -458,9 +517,13 @@ Then restart the bot."""
 📥 Total admins from API: {len(admins)}
 🆕 New topics created: {created_topics}
 🔄 Admins updated: {updated_admins}
+👤 No telegram_id (assigned to main admin): {no_telegram_id_count}
 ⚠️ Errors: {errors}
 
 <i>All admins with telegram_id are now registered.</i>"""
+            
+            if no_telegram_id_count > 0 and not main_bot_admin:
+                text += "\n\n⚠️ <b>Note:</b> Some admins have no telegram_id. Set main bot admin in settings to assign them."
             
             await callback.message.edit_text(
                 text,
@@ -479,7 +542,7 @@ Then restart the bot."""
             )
 
     async def show_admin_sales(self, callback: CallbackQuery):
-        """Show admin sales report - unsettled users per admin"""
+        """Show admin sales selection menu"""
         try:
             if not self.api_client:
                 await callback.message.edit_text(
@@ -490,6 +553,57 @@ Then restart the bot."""
                 await callback.answer()
                 return
 
+            # Get registered admins
+            admin_topics = await self.db.get_all_admin_topics()
+            if not admin_topics:
+                await callback.message.edit_text(
+                    "📝 <b>No admins registered.</b>\n\nSync admins first.",
+                    parse_mode="HTML",
+                    reply_markup=self.get_back_keyboard()
+                )
+                await callback.answer()
+                return
+
+            # Build selection keyboard
+            buttons = []
+            buttons.append([InlineKeyboardButton(
+                text="📊 All Admins",
+                callback_data=f"{MENU_PREFIX}sales_all"
+            )])
+            
+            for admin in admin_topics:
+                admin_username = admin.get('admin_username', 'Unknown')
+                if admin_username and admin_username != 'Unknown':
+                    buttons.append([InlineKeyboardButton(
+                        text=f"👤 {admin_username}",
+                        callback_data=f"{MENU_PREFIX}sales_{admin_username}"
+                    )])
+            
+            buttons.append([InlineKeyboardButton(
+                text="🔙 Back to Menu",
+                callback_data=f"{MENU_PREFIX}main"
+            )])
+
+            keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+            
+            await callback.message.edit_text(
+                "🧾 <b>Admin Sales Report</b>\n\nSelect an admin to view their sales:",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            await callback.answer()
+
+        except Exception as e:
+            logger.error(f"Admin sales menu error: {str(e)}")
+            await callback.message.edit_text(
+                f"❌ <b>Error:</b> {str(e)}",
+                parse_mode="HTML",
+                reply_markup=self.get_back_keyboard()
+            )
+
+    async def show_admin_sales_report(self, callback: CallbackQuery, selected_admin: str = None):
+        """Show admin sales report - unsettled users per admin or specific admin"""
+        try:
             await callback.message.edit_text(
                 "🔄 <b>Loading Admin Sales Report...</b>\n\nFetching data...",
                 parse_mode="HTML"
@@ -505,6 +619,10 @@ Then restart the bot."""
                     reply_markup=self.get_back_keyboard()
                 )
                 return
+
+            # Filter to selected admin if specified
+            if selected_admin and selected_admin != "all":
+                admin_topics = [a for a in admin_topics if a.get('admin_username') == selected_admin]
 
             # Get local renew data: usernames that have user_updated (expire extended) in audit_log
             renewed_users = await self.db.get_renewed_usernames()
@@ -563,7 +681,10 @@ Then restart the bot."""
                 return
 
             # Build report
-            text = "🧾 <b>Admin Sales Report</b>\n"
+            if selected_admin and selected_admin != "all":
+                text = f"🧾 <b>Admin Sales Report - {selected_admin}</b>\n"
+            else:
+                text = "🧾 <b>Admin Sales Report - All Admins</b>\n"
             text += "<i>Unsettled users only (not Paid/Dismissed)</i>\n\n"
 
             for admin_name in sorted(admin_data.keys()):
@@ -583,10 +704,16 @@ Then restart the bot."""
             from utils import truncate_text
             text = truncate_text(text)
 
+            # Back button
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Back to Admin Sales", callback_data=f"{MENU_PREFIX}admin_sales")],
+                [InlineKeyboardButton(text="🏠 Main Menu", callback_data=f"{MENU_PREFIX}main")]
+            ])
+
             await callback.message.edit_text(
                 text,
                 parse_mode="HTML",
-                reply_markup=self.get_back_keyboard()
+                reply_markup=keyboard
             )
 
         except Exception as e:
@@ -1116,6 +1243,8 @@ All items have been marked as ✅ checked out."""
         
         api_status = "✅ Connected" if self.api_client else "❌ Not configured"
         chat_status = f"✅ {self.fallback_chat_id}" if self.fallback_chat_id else "❌ Not set"
+        main_bot_admin = await self.db.get_sync_status("main_bot_admin_id")
+        admin_status = f"✅ {main_bot_admin}" if main_bot_admin else "❌ Not set"
         
         text = f"""⚙️ <b>Settings</b>
 
@@ -1124,6 +1253,9 @@ All items have been marked as ✅ checked out."""
 <b>🔄 Sync Status:</b> {sync_emoji} {"Enabled" if sync_status == "true" else "Disabled"}
 <b>📡 Panel API:</b> {api_status}
 <b>💬 Forum Chat:</b> {chat_status}
+<b>👤 Main Bot Admin:</b> {admin_status}
+
+<i>Main Bot Admin manages topics for admins without telegram_id</i>
 
 <b>Actions:</b>"""
         
@@ -1135,7 +1267,10 @@ All items have been marked as ✅ checked out."""
                 )
             ],
             [
-                InlineKeyboardButton(text="🗑 Clear All Admins", callback_data=f"{MENU_PREFIX}set_clear_admins")
+                InlineKeyboardButton(text="� Set Main Bot Admin", callback_data=f"{MENU_PREFIX}set_main_admin")
+            ],
+            [
+                InlineKeyboardButton(text="�🗑 Clear All Admins", callback_data=f"{MENU_PREFIX}set_clear_admins")
             ],
             [
                 InlineKeyboardButton(text="🔄 Reset Topics", callback_data=f"{MENU_PREFIX}set_reset_topics")
@@ -1168,6 +1303,42 @@ All items have been marked as ✅ checked out."""
                     await self.show_settings(callback)
                 except Exception:
                     pass  # Ignore if message content is the same
+                
+            elif action == "set_main_admin":
+                # Show instruction to set main bot admin
+                main_admin = await self.db.get_sync_status("main_bot_admin_id")
+                current_text = f"Current: {main_admin}" if main_admin else "Not set"
+                
+                await callback.message.edit_text(
+                    f"""👤 <b>Set Main Bot Admin</b>
+
+{current_text}
+
+To set the main bot admin:
+1. Send <code>/setadmin YOUR_TELEGRAM_ID</code> to the bot
+2. Or click the button below to use your ID
+
+<i>This admin will manage topics for panel admins without telegram_id.</i>""",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="✅ Use My ID",
+                                callback_data=f"{MENU_PREFIX}set_admin_me_{callback.from_user.id}"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(text="🔙 Back", callback_data=f"{MENU_PREFIX}settings")
+                        ]
+                    ])
+                )
+                await callback.answer()
+                
+            elif action.startswith("set_admin_me_"):
+                admin_id = action.replace("set_admin_me_", "")
+                await self.db.set_sync_status("main_bot_admin_id", admin_id)
+                await callback.answer(f"Main bot admin set to {admin_id} ✅", show_alert=True)
+                await self.show_settings(callback)
                 
             elif action == "set_clear_admins":
                 # Show confirmation
