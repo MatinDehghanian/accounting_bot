@@ -293,13 +293,24 @@ Select an option below:"""
                 for i, admin in enumerate(admin_topics, 1):
                     username = admin['admin_username'] or 'Unknown'
                     text += f"<b>{i}. {username}</b>\n"
-                    text += f"   🆔 TG ID: <code>{admin['admin_telegram_id']}</code>\n"
+                    
+                    tg_id = admin.get('admin_telegram_id')
+                    if tg_id:
+                        text += f"   🆔 TG ID: <code>{tg_id}</code>\n"
+                    else:
+                        text += "   🆔 TG ID: <i>None (Panel only)</i>\n"
+                    
                     text += f"   💬 Chat: <code>{admin['chat_id']}</code>\n"
                     
                     if admin['topic_id']:
                         text += f"   🗂 Topic: <code>{admin['topic_id']}</code>\n"
                     else:
                         text += "   🗂 Topic: Main chat\n"
+                    
+                    managed_by = admin.get('managed_by')
+                    if managed_by:
+                        text += f"   👤 Managed by: <code>{managed_by}</code>\n"
+                    
                     text += "\n"
                 
                 text += "<i>Topics are created automatically for each admin.</i>"
@@ -443,30 +454,30 @@ Then restart the bot."""
                 admin_username = admin.get('username', 'unknown')
                 admin_telegram_id = admin.get('telegram_id')
                 
-                # If admin has no telegram_id, use main bot admin or skip
+                # Track if admin has no telegram_id
+                assigned_to_main_admin = False
                 if not admin_telegram_id:
-                    if main_bot_admin:
-                        # Use main bot admin's ID as placeholder
-                        admin_telegram_id = main_bot_admin
-                        no_telegram_id_count += 1
-                        logger.info(f"Admin {admin_username} has no telegram_id, assigning to main bot admin {main_bot_admin}")
-                    else:
+                    no_telegram_id_count += 1
+                    assigned_to_main_admin = True
+                    if not main_bot_admin:
                         logger.warning(f"Admin {admin_username} has no telegram_id and no main bot admin set - skipping")
                         continue
                 
-                admin_telegram_id = str(admin_telegram_id)
+                admin_telegram_id_str = str(admin_telegram_id) if admin_telegram_id else None
                 
-                # Check if admin already exists
-                existing = await self.db.get_admin_topic(admin_telegram_id)
+                # Check if admin already exists (by username)
+                existing = await self.db.get_admin_topic(admin_username)
                 
                 if existing:
-                    # Update username if changed
-                    if existing['admin_username'] != admin_username:
+                    # Update if anything changed
+                    if (existing.get('admin_telegram_id') != admin_telegram_id_str or 
+                        existing.get('managed_by') != (main_bot_admin if assigned_to_main_admin else None)):
                         await self.db.set_admin_topic(
-                            admin_telegram_id=admin_telegram_id,
                             admin_username=admin_username,
+                            admin_telegram_id=admin_telegram_id_str,
                             chat_id=existing['chat_id'],
-                            topic_id=existing['topic_id']
+                            topic_id=existing['topic_id'],
+                            managed_by=main_bot_admin if assigned_to_main_admin else None
                         )
                         updated_admins += 1
                 else:
@@ -477,10 +488,14 @@ Then restart the bot."""
                     if chat_id:
                         try:
                             # Try to create a forum topic for this admin
+                            topic_name = f"👤 {admin_username}"
+                            if assigned_to_main_admin:
+                                topic_name = f"📋 {admin_username} (Panel)"
+                            
                             logger.info(f"Creating topic for admin {admin_username} in chat {chat_id}")
                             topic = await self.bot.create_forum_topic(
                                 chat_id=int(chat_id),
-                                name=f"👤 {admin_username}"[:128]
+                                name=topic_name[:128]
                             )
                             topic_id = str(topic.message_thread_id)
                             created_topics += 1
@@ -500,10 +515,11 @@ Then restart the bot."""
                     
                     # Save admin mapping
                     await self.db.set_admin_topic(
-                        admin_telegram_id=admin_telegram_id,
                         admin_username=admin_username,
+                        admin_telegram_id=admin_telegram_id_str,
                         chat_id=chat_id or "",
-                        topic_id=topic_id
+                        topic_id=topic_id,
+                        managed_by=main_bot_admin if assigned_to_main_admin else None
                     )
             
             # Update sync status
@@ -1748,16 +1764,18 @@ async def auto_register_admin(admin_telegram_id: str, admin_username: str,
     Returns: (chat_id, topic_id)
     """
     
-    # Check if admin already exists
-    existing = await db.get_admin_topic(admin_telegram_id)
+    # Check if admin already exists (by username)
+    existing = await db.get_admin_topic(admin_username)
     if existing:
-        # Update username if changed
-        if existing['admin_username'] != admin_username:
+        # Update telegram_id if changed
+        admin_telegram_id_str = str(admin_telegram_id) if admin_telegram_id else None
+        if existing.get('admin_telegram_id') != admin_telegram_id_str:
             await db.set_admin_topic(
-                admin_telegram_id=admin_telegram_id,
                 admin_username=admin_username,
+                admin_telegram_id=admin_telegram_id_str,
                 chat_id=existing['chat_id'],
-                topic_id=existing['topic_id']
+                topic_id=existing['topic_id'],
+                managed_by=existing.get('managed_by')
             )
         return existing['chat_id'], existing.get('topic_id')
     
@@ -1780,11 +1798,13 @@ async def auto_register_admin(admin_telegram_id: str, admin_username: str,
             topic_id = None
     
     # Save admin mapping
+    admin_telegram_id_str = str(admin_telegram_id) if admin_telegram_id else None
     await db.set_admin_topic(
-        admin_telegram_id=admin_telegram_id,
         admin_username=admin_username,
+        admin_telegram_id=admin_telegram_id_str,
         chat_id=target_chat_id or "",
-        topic_id=topic_id
+        topic_id=topic_id,
+        managed_by=None  # Webhook events always have admin_telegram_id
     )
     
     logger.info(f"Registered new admin: {admin_username} ({admin_telegram_id})")

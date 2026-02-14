@@ -98,10 +98,11 @@ class Database:
             # Admin topics mapping table
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS admin_topics (
-                    admin_telegram_id TEXT PRIMARY KEY,
-                    admin_username TEXT,
+                    admin_username TEXT PRIMARY KEY,
+                    admin_telegram_id TEXT,
                     chat_id TEXT NOT NULL,
                     topic_id TEXT,
+                    managed_by TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -151,8 +152,19 @@ class Database:
             """, (username, status, expire, datetime.now(timezone.utc).isoformat()))
             await db.commit()
 
-    async def get_admin_topic(self, admin_telegram_id: str) -> Optional[Dict]:
-        """Get admin topic mapping"""
+    async def get_admin_topic(self, admin_username: str) -> Optional[Dict]:
+        """Get admin topic mapping by username"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM admin_topics WHERE admin_username = ?",
+                (admin_username,)
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_admin_topic_by_telegram_id(self, admin_telegram_id: str) -> Optional[Dict]:
+        """Get admin topic mapping by telegram_id (for backwards compatibility)"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -162,15 +174,24 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def set_admin_topic(self, admin_telegram_id: str, admin_username: str, 
-                             chat_id: str, topic_id: Optional[str] = None):
+    async def set_admin_topic(self, admin_username: str, admin_telegram_id: Optional[str],
+                             chat_id: str, topic_id: Optional[str] = None, managed_by: Optional[str] = None):
         """Set admin topic mapping"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 INSERT OR REPLACE INTO admin_topics 
-                (admin_telegram_id, admin_username, chat_id, topic_id)
-                VALUES (?, ?, ?, ?)
-            """, (admin_telegram_id, admin_username, chat_id, topic_id))
+                (admin_username, admin_telegram_id, chat_id, topic_id, managed_by)
+                VALUES (?, ?, ?, ?, ?)
+            """, (admin_username, admin_telegram_id, chat_id, topic_id, managed_by))
+            await db.commit()
+
+    async def delete_admin_topic(self, admin_username: str):
+        """Delete admin topic mapping"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM admin_topics WHERE admin_username = ?",
+                (admin_username,)
+            )
             await db.commit()
 
     async def set_payment_status(self, username: str, status: str, set_by: str):
